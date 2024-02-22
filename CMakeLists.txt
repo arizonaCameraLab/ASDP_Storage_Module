@@ -4,7 +4,8 @@ project(ASDP_Storage_Module LANGUAGES CXX)
 #-----------------------------------------------------------------------------
 # Set your favorite C++ standard for compiling the internal files.  The library
 # will export things as extern "C" so this will not impact client programs.
-set(CMAKE_CXX_STANDARD 11)
+# We need C++17 for the filesystem library.
+set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 #-----------------------------------------------------------------------------

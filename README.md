@@ -22,9 +22,9 @@ systems could be used).  On Ubuntu Linux, this can be done as follows
 **Run:** The ASDP_Storage_Module can be run from the build directory using the
 following command: `./ASDP_Storage_Module NICNameIn NICNameOut StorageRoot`
 where NICNameIn is the DNS name or dotted decimal network address of the network
-interface to use to connect to a Core_Module (may be localhost to ignore) and
+interface to use to connect to a Core_Module (may be `localhost` to ignore) and
 NicNameOut is the DNS name or dotted decimal network address of the network
-interface to act as a server on (may be localhost to ignore).
+interface to act as a server on (may be `localhost` to ignore).
 The dotted decimal name can be found using the `ifconfig` command on Linux and `ipconfig` on Windows.
 NICNameIn and NICNameOut cannot be the same, to avoid connecting to itself.
 StorageRoot specifies the root directory where data should be stored.
@@ -38,4 +38,3 @@ Linux, this can be generated as follows:
 
 **Test:** CMake includes the concept of test applications. You can run the tests
 by running `make test` in the build directory.
-
