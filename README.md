@@ -38,3 +38,24 @@ Linux, this can be generated as follows:
 
 **Test:** CMake includes the concept of test applications. You can run the tests
 by running `make test` in the build directory.
+
+## Overview
+
+**Architecture:** The *ASDP_Storage_Module.cpp* contains the main program that is
+run to start the Storage Module. It makes using of the *Storage_Module* library.
+The *Storage_Module.h* file contains the class definitions for
+the classes in the Storage_Module library and *Storage_Module.cpp* has the
+implementations of these classes.
+
+- Storage_Module: The Storage_Module class is the main class for the Storage Module.
+It implements the client side of the Storage Module and contains one more more
+Storage_Module_Server objects to handle the server side of the Storage Module for
+each serial numbered Core Module that has been recorded or that is running live.
+
+- Storage_Module_Server: Implements the server side of the Storage Module. Sends
+Discovery packets to advertise the Storage Module and listens for incoming
+connection requests, with each on its own port.
+
+**Files:** The *StorageRoot* directory will contain a directory for the
+serial number of Core Modules that have been connected.  Each of these contains
+zero or more directories for each session that has been recorded.
