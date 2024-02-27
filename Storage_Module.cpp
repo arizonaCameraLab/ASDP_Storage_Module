@@ -48,6 +48,7 @@ Storage_Module::Storage_Module(const std::string& NicNameIn, const std::string& 
   : CoreClient(NicNameIn)
   , m_status(CoreClient::GetConstructorStatus())
   , m_verbosity(verbosity)
+  , m_nicNameIn(NicNameIn)
   , m_nicNameOut(NicNameOut)
   , m_storageRoot(StorageRoot)
   , m_stop(false)
@@ -145,6 +146,43 @@ void Storage_Module_Server::doEveryLoop()
   /// @todo
 }
 
+std::shared_ptr<Message> Storage_Module::WaitForMessageType(MessageID type, float seconds)
+{
+  std::shared_ptr<Message> empty;   ///< We return this on failure.
+  std::chrono::high_resolution_clock::time_point start = std::chrono::high_resolution_clock::now();
+  do {
+    std::shared_ptr<StreamPacket> response;
+    Status status = m_stream->ReceiveStreamPacket(0, response);
+    if ((status != OKAY) && (status != TIMEOUT)) {
+      return empty;
+    }
+    if (response != nullptr) {
+      std::shared_ptr<Message> message;
+      status = response->GetNextMessage(message);
+      if (status != OKAY) {
+        return empty;
+      }
+      while (message != nullptr) {
+        MessageID messageType;
+        status = message->GetType(messageType);
+        if (status != OKAY) {
+          return empty;
+        }
+        if (messageType == type) {
+          // Worked!
+          return message;
+        }
+        status = response->GetNextMessage(message);
+        if (status != OKAY) {
+          return empty;
+        }
+      }
+    }
+  } while (std::chrono::duration<double>(std::chrono::high_resolution_clock::now() - start).count() <= seconds);
+
+  return empty;
+}
+
 void Storage_Module::ClientThread()
 {
   // The Discovery thread is already running, so we don't need to start it here.
@@ -153,6 +191,7 @@ void Storage_Module::ClientThread()
 
     // If we are already connected to a server, check for and handle incoming data.
     if (m_stream != nullptr) {
+
       /// @todo
 
     // We are not connected to a server, so look for one in the list of identified servers.
@@ -202,13 +241,33 @@ void Storage_Module::ClientThread()
         // Keep track of this server as the one we forward data to.
         m_server = server;
 
-        // Get the information about the server we just connected to.
-        /// @todo
+        // Get the information about the server we just connected to.  Use it to set up the incoming
+        // streams from each camera.  Also use it to request streaming of all optional features that
+        // it supports.
+        std::shared_ptr<Message> response = WaitForMessageType(STATE, 2.0);
+        if (response == nullptr) {
+          // We're broken, so we can't do anything else.  Just set the status and return.
+          m_status = TIMEOUT;
+          return;
+        }
+        if (m_verbosity > 2) {
+          std::cout << "  Storage_Module::Got state" << std::endl;
+        }
+        MessageState state(*response);
+        status = state.GetConstructorStatus();
+        if (status != OKAY) {
+          // We're broken, so we can't do anything else.  Just set the status and return.
+          m_status = status;
+          return;
+        }
+        status = ConfigureClientConnection(state);
+        if (status != OKAY) {
+          // We're broken, so we can't do anything else.  Just set the status and return.
+          m_status = status;
+          return;
+        }
 
         // See if recording at start-up is enabled for this server.  If so, start recording.
-        /// @todo
-
-        // Establish the receiver threads for this server that will store and perhaps forward the data.
         /// @todo
 
       } else {
@@ -247,6 +306,105 @@ Status Storage_Module::ConstructNewServer(std::shared_ptr<Storage_Module_Server>
   server = m_servers.back()->m_server;
 
   return OKAY;
+}
+
+Status Storage_Module::ConfigureClientConnection(const MessageState& response)
+{
+  // Lock the mutex to keep state from changing while we're working.
+  std::lock_guard<std::recursive_mutex> lock(m_mutex);
+
+  // Get the list of features that the server supports.
+  std::vector<FeatureID> features;
+  Status status = response.GetFeatures(features);
+  if (status != OKAY) {
+    return status;
+  }
+
+  // Enable streaming for each of them.
+  for (auto feature : features) {
+    switch (feature) {
+      case TEMPERATURE_API_AVAILABLE:
+        status = SendCommandPacket(CommandPacketStreamTemperatures());
+        if (status != OKAY) {
+          return status;
+        }
+        break;
+      case POSE_API_ORIENTATION_AVAILABLE:
+      case POSE_API_POSITION_AVAILABLE:
+        status = SendCommandPacket(CommandPacketStreamPoses());
+        if (status != OKAY) {
+          return status;
+        }
+        break;
+      default:
+        // We never heard of this feature, so we can't enable it.
+        return UNEXPECTED_INTERNAL_STATE;
+    }
+  }
+
+  // Get a list of the cameras that the server supports.
+  std::vector<CameraInfo> cameras;
+  status = response.GetCameras(cameras);
+
+  // Open a UDP stream receiver for each camera in the system, connecting it
+  // to a thread that will receive and route the data to storage and/or a connected
+  // client depending on our mode of operation.
+  uint32_t whichCamera = 0;
+  for (auto &camera : cameras) {
+    // Next camera index.
+    whichCamera++;
+
+    // Open a UDP stream receiver for this camera.
+    std::shared_ptr<ReceiverUDP> stream = std::make_shared<ReceiverUDP>(m_nicNameIn);
+    if (stream->GetConstructorStatus() != OKAY) {
+      return stream->GetConstructorStatus();
+    }
+
+    // Start the stream receiver thread to listen on this receiver.
+    std::shared_ptr<ReceiverInfo> receiverInfo = std::make_shared<ReceiverInfo>(stream);
+    m_receiver_threads.emplace_back(std::thread(&Storage_Module::StreamReceiverThread, this, receiverInfo));
+
+    // Request the server to start streaming data from this camera.
+    SubregionDescription subregion;
+    subregion.cameraID = whichCamera;
+    subregion.skipFrames = 0;
+    subregion.startTimeSeconds = 0;
+    subregion.startTimeMicroseconds = 0;
+    subregion.left = 0;
+    subregion.top = 0;
+    subregion.right = camera.width - 1;
+    subregion.bottom = camera.height - 1;
+    
+    uint16_t port;
+    status = stream->GetPort(port);
+    if (status != OKAY) {
+      return status;
+    }
+    StreamEndpoint endpoint(m_nicNameIn, port);
+
+    status = SendCommandPacket(CommandPacketStreamSubregion(endpoint, subregion));
+    if (status != OKAY) {
+      return status;
+    }
+  }
+
+  // Configure all of the cameras to run from the first unsynchronized trigger at the @todo rate.
+  /// @todo
+
+
+  /// @todo
+
+  return OKAY;
+}
+
+void Storage_Module::StreamReceiverThread(std::shared_ptr<ReceiverInfo> receiver)
+{
+  if (m_verbosity > 2) {
+    std::cout << "  Storage_Module::StreamReceiverThread() started" << std::endl;
+  }
+  while (!m_stop) {
+    /// @todo
+  }
 }
 
 std::string Storage_Module::Test()

@@ -17,7 +17,7 @@ class Storage_Module_Server : public CoreServerBase {
 public:
 
   /// @brief Constructor
-  /// @param parent The parent object that created this server.  WARNING: This is an unprotected pointer.
+  /// @param parent The parent object that created this server. @todo WARNING: This is an unprotected pointer.
   /// We must be careful to ensure that the parent object outlives this object.
   /// @param serialNumber The serial number of the server.
   /// @param NicName The name of the network interface to listen on for incoming connections.
@@ -105,11 +105,23 @@ protected:
   /// The verbosity level of the server, 0 for no verbosity, higher for more verbosity.
   int m_verbosity;
 
+  /// The name of the network interface to listen on for incoming connections.
+  std::string m_nicNameIn;
+
   /// The name of the network interface to listen on for outgoing connections.
   std::string m_nicNameOut;
 
   /// The root directory for storage.
   std::string m_storageRoot;
+
+  //=============================================================================
+  // Helper functions
+
+  /// @brief Wait for a message of the specified type to arrive.
+  /// @param type The type of message to wait for.
+  /// @param seconds The number of seconds to wait for the message.
+  /// @return The message that arrived, or nullptr if none arrived.
+  std::shared_ptr<Message> WaitForMessageType(MessageID type, float seconds);
 
   //=============================================================================
   // Thread management.
@@ -118,6 +130,7 @@ protected:
   std::atomic<bool> m_stop;
 
   /// Mutex used by threads to avoid race conditions.
+  /// @todo Consider whether the things done on the client-side only need to be guarded.
   std::recursive_mutex m_mutex;
 
   /// @brief Information about a single server.
@@ -147,6 +160,24 @@ protected:
   /// @brief Body of the thread that handles the client connected to a Core Module.
   void ClientThread();
 
+  /// Receivers for the UDP streams from each camera on the connected server.
+  std::vector< std::shared_ptr<ReceiverUDP> > m_receivers;
+
+  /// @brief Information about a single receiver.
+  struct ReceiverInfo {
+    /// @brief Constructor
+    ReceiverInfo(std::shared_ptr<ReceiverUDP> Receiver) :
+      m_receiver(Receiver) { }
+
+    std::shared_ptr<ReceiverUDP> m_receiver;
+  };
+
+  std::vector<std::thread> m_receiver_threads;
+
+  /// @brief Body of a thread that handles a single receiver.
+  /// @param receiver The receiver to handle.
+  void StreamReceiverThread(std::shared_ptr<ReceiverInfo> receiver);
+
   /// The server associated with the current client.
   std::shared_ptr<Storage_Module_Server> m_server;
 
@@ -158,6 +189,14 @@ protected:
   /// @param [out] server The server that was constructed as part of this.
   /// @return Status indicating success or failure.
   Status ConstructNewServer(std::shared_ptr<Storage_Module_Server> &server);
+
+  /// @brief Configure the client connection based on the response from the Core Module.
+  /// 
+  /// This will request streaming of all optional streams that are supported by the server.
+  /// It will also open a UDP receiver for each camera, at full size and rate.
+  /// @param response The response from the Core Module.
+  /// @return Status indicating success or failure.
+  Status ConfigureClientConnection(const MessageState &response);
 
   /// Used to determine the port to listen on so that each is different.  Decrement to get the next port.
   std::atomic<uint16_t> m_nextPort;

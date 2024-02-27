@@ -37,6 +37,7 @@ endif()
 #-----------------------------------------------------------------------------
 # Build options.
 option(BUILD_TESTS "Build test programs" ON)
+option(BUILD_UTILITIES "Build utility programs" ON)
 
 if (DOXYGEN_FOUND)
     option(BUILD_DOXYGEN "Build DOxygen documentation" ON)
@@ -119,4 +120,27 @@ if(BUILD_TESTS)
   endforeach (BASE)
 
 endif(BUILD_TESTS)
+
+#-----------------------------------------------------------------------------
+# Build utilities if we've been asked to.
+
+if(BUILD_UTILITIES)
+
+  set (UTILS
+	  Time_Disk_Writes
+    Time_Disk_Reads
+  )
+  foreach (BASE ${UTILS})
+    set (APP ${BASE})
+    add_executable (${APP} util/${BASE}.cpp)
+    set_target_properties(${APP} PROPERTIES FOLDER util/C++)
+    target_link_libraries(${APP} PRIVATE
+	    Storage_Module
+    )
+    install(TARGETS ${APP} EXPORT ${PROJECT_NAME}
+      RUNTIME DESTINATION bin
+    )
+  endforeach (BASE)
+
+endif(BUILD_UTILITIES)
 
