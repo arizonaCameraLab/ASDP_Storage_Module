@@ -25,7 +25,7 @@ set_property(GLOBAL PROPERTY USE_FOLDERS ON)
 #-----------------------------------------------------------------------------
 # Checking for optional and required packages
 
-find_package(ASDP_Core REQUIRED)
+find_package(ASDP_Core_API REQUIRED)
 find_package(Doxygen)
 find_package(OpenMP)
 if(OPENMP_FOUND)
@@ -73,7 +73,7 @@ target_include_directories(Storage_Module PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>
   $<INSTALL_INTERFACE:include>
 )
-target_link_libraries(Storage_Module ASDP_Core::ASDP_Core)
+target_link_libraries(Storage_Module ASDP_Core_API::ASDP_Core_API)
 
 #-----------------------------------------------------------------------------
 # Build the simulator.
@@ -86,7 +86,7 @@ set (ASDP_Storage_Module_SOURCES
 )
 
 add_executable(ASDP_Storage_Module ${ASDP_Storage_Module_SOURCES} ${ASDP_Storage_Module_HEADERS})
-target_link_libraries(ASDP_Storage_Module Storage_Module ASDP_Core::ASDP_Core)
+target_link_libraries(ASDP_Storage_Module Storage_Module ASDP_Core_API::ASDP_Core_API)
 
 install(TARGETS ASDP_Storage_Module EXPORT ${PROJECT_NAME}
   RUNTIME DESTINATION bin COMPONENT bin
