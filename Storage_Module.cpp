@@ -18,6 +18,17 @@ Storage_Module_Server::Storage_Module_Server(Storage_Module* parent, uint32_t se
   /// @todo
 }
 
+void Storage_Module_Server::doEveryLoop()
+{
+  // If the threads are supposed to be stopping, set an error indicating
+  // this.
+  if (m_parent->m_stop) {
+    m_error = "Server is stopping";
+  }
+
+  /// @todo
+}
+
 void Storage_Module_Server::doReset(const CommandPacketReset& command, ClientState& client)
 {
   m_error = "@todo implement doReset";
@@ -74,9 +85,6 @@ Storage_Module::Storage_Module(const std::string& NicNameIn, const std::string& 
         serialNumber = 0;
       }
       if (serialNumber > 0) {
-        // Lock the mutex to keep state from changing while we're working.
-        std::lock_guard<std::recursive_mutex> lock(m_mutex);
-
         if (verbosity > 1) {
           std::cout << " Storage_Module::Starting server for serial# " << serialNumber << std::endl;
         }
@@ -133,17 +141,6 @@ void Storage_Module::ServerThread(std::shared_ptr<ServerInfo> server)
     // If we're not stopping, then we had an error.
     m_status = UNEXPECTED_INTERNAL_STATE;
   }
-}
-
-void Storage_Module_Server::doEveryLoop()
-{
-  // If the threads are supposed to be stopping, set an error indicating
-  // this.
-  if (m_parent->m_stop) {
-    m_error = "Server is stopping";
-  }
-
-  /// @todo
 }
 
 std::shared_ptr<Message> Storage_Module::WaitForMessageType(MessageID type, float seconds)
@@ -216,9 +213,6 @@ void Storage_Module::ClientThread()
           std::cout << " Storage_Module::Connected to server " << servers[0] << ", serial# " << m_serial << std::endl;
         }
 
-        // Lock the mutex to keep state from changing while we're working.
-        std::lock_guard<std::recursive_mutex> lock(m_mutex);
-
         // See if we already have a server with this serial number in our list of servers.
         std::shared_ptr<Storage_Module_Server> server;
         for (auto s : m_servers) {
@@ -280,9 +274,6 @@ void Storage_Module::ClientThread()
 
 Status Storage_Module::ConstructNewServer(std::shared_ptr<Storage_Module_Server>& server)
 {
-  // Lock the mutex to keep state from changing while we're working.
-  std::lock_guard<std::recursive_mutex> lock(m_mutex);
-
   if (m_verbosity > 1) {
     std::cout << " Storage_Module::ConstructNewServer() for serial# " << m_serial << std::endl;
   }
@@ -310,9 +301,6 @@ Status Storage_Module::ConstructNewServer(std::shared_ptr<Storage_Module_Server>
 
 Status Storage_Module::ConfigureClientConnection(const MessageState& response)
 {
-  // Lock the mutex to keep state from changing while we're working.
-  std::lock_guard<std::recursive_mutex> lock(m_mutex);
-
   // Get the list of features that the server supports.
   std::vector<FeatureID> features;
   Status status = response.GetFeatures(features);

@@ -17,8 +17,9 @@ class Storage_Module_Server : public CoreServerBase {
 public:
 
   /// @brief Constructor
-  /// @param parent The parent object that created this server. @todo WARNING: This is an unprotected pointer.
-  /// We must be careful to ensure that the parent object outlives this object.
+  /// @param parent The parent object that created this server. Note: This is an unprotected pointer.
+  /// We must be careful to ensure that the parent object outlives this object. This is being done by
+  /// waiting for all threads to stop before deleting the parent object.
   /// @param serialNumber The serial number of the server.
   /// @param NicName The name of the network interface to listen on for incoming connections.
   /// @param sendPort The port to send outgoing connections on.
@@ -126,12 +127,11 @@ protected:
   //=============================================================================
   // Thread management.
 
+  /// @todo Consider the need for mutexes to protect the data structures when we
+  /// view or modify them in the m_servers or in the StreamReceiverThreads.
+
   /// Set to true to stop all threads.
   std::atomic<bool> m_stop;
-
-  /// Mutex used by threads to avoid race conditions.
-  /// @todo Consider whether the things done on the client-side only need to be guarded.
-  std::recursive_mutex m_mutex;
 
   /// @brief Information about a single server.
   struct ServerInfo {
@@ -175,6 +175,10 @@ protected:
   std::vector<std::thread> m_receiver_threads;
 
   /// @brief Body of a thread that handles a single receiver.
+  /// 
+  /// This reads Messages from the receiver. If we are storing, it
+  /// stores to the appropriate file. If we are streaming, it forwards
+  /// the message to the appropriate m_server.
   /// @param receiver The receiver to handle.
   void StreamReceiverThread(std::shared_ptr<ReceiverInfo> receiver);
 
