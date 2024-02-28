@@ -59,3 +59,10 @@ connection requests, with each on its own port.
 **Files:** The *StorageRoot* directory will contain a directory for the
 serial number of Core Modules that have been connected.  Each of these contains
 zero or more directories for each session that has been recorded.
+
+## Utilities
+
+The **util** directory contains a number of utilities.
+- **Time_Disk_Writes** is a utility to measure the time it takes to write frames to disk.
+- **Time_Disk_Reads** is a utility to measure the time it takes to read frames from disk.
+- 

@@ -39,22 +39,26 @@ void writeToFile(const std::string& fileName, std::atomic<bool>& stopFlag, doubl
 }
 
 int main(int argc, char* argv[]) {
-  if (argc != 4) {
-    std::cerr << "Usage: " << argv[0] << " <directory> <time_in_seconds> <number_of_cameras>\n";
-    std::cerr << "  directory: The directory to write the files to. Use /dev/null to write all files to /dev/null\n";
+  if (argc < 4) {
+    std::cerr << "Usage: " << argv[0] << " <time_in_seconds> <number_of_cameras> <directories...>\n";
     std::cerr << "  time_in_seconds: The number of seconds to write data to the files.\n";
     std::cerr << "  number_of_cameras: The number of camera files to write to.\n";
+    std::cerr << "  directories: One or more directories to write the files to. Use /dev/null to write all files to /dev/null\n";
     std::cerr << std::endl;
     std::cerr << "This program opens as many threads as there are cameras and writes data to the files\n";
-    std::cerr << "in the specified directory. The program will write data for the specified number of\n";
+    std::cerr << "in the specified directories. The program will write data for the specified number of\n";
     std::cerr << "seconds and then exit, reporting the frames/second written by each camera.\n";
+    std::cerr << "The files are written round-robin to the specified directories.\n";
     std::cerr << std::endl;
     return 1;
   }
 
-  std::string directory = argv[1];
-  int timeInSeconds = std::stoi(argv[2]);
-  int numberOfCameras = std::stoi(argv[3]);
+  int timeInSeconds = std::stoi(argv[1]);
+  int numberOfCameras = std::stoi(argv[2]);
+  std::vector<std::string> directories;
+  for (int i = 3; i < argc; ++i) {
+    directories.push_back(argv[i]);
+  }
 
   std::vector<double> fps(numberOfCameras, 0.0);
 
@@ -64,6 +68,7 @@ int main(int argc, char* argv[]) {
   std::cout << "Writing to " << numberOfCameras << " cameras for " << timeInSeconds << " seconds" << std::endl;
   std::vector<std::thread> threads;
   for (int i = 0; i < numberOfCameras; ++i) {
+    std::string directory = directories[i % directories.size()];
     std::string fileName = directory + "/" + std::to_string(i + 1) + ".asdp";
     if ((directory == "/dev/null") || (directory == "NUL:")) {
       fileName = directory;
