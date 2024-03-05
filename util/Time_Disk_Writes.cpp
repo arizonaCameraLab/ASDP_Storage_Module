@@ -7,6 +7,7 @@
 #include <vector>
 #include <chrono>
 #include <thread>
+#include <ASDP_Core_API.h>
 
 /// @brief Thread function to write data to a file.
 /// @param fileName The name of the file to write to.
@@ -15,23 +16,24 @@
 /// @note This function will write data to the file until the stop flag is set.
 void writeToFile(const std::string& fileName, std::atomic<bool>& stopFlag, double &fps)
 {
-  std::ofstream outFile(fileName, std::ios::binary);
-  if (!outFile.is_open()) {
-    std::cerr << "Error: Failed to open file " << fileName << std::endl;
-    fps = -1;
-    return;
-  }
+  // Use the Core API SenderFile object to send data to the file.
+  std::shared_ptr<asdp::SenderFile> sender = std::make_shared<asdp::SenderFile>(fileName);
+
   std::vector<unsigned char> data(1280*1024*2);
 
   auto startTime = std::chrono::steady_clock::now();
 
   size_t count = 0;
   while (!stopFlag) {
-    outFile.write(reinterpret_cast<const char*>(data.data()), data.size());
+    if (asdp::OKAY != sender->Send(reinterpret_cast<const char*>(data.data()), data.size())) {
+      std::cerr << "Error: Failed to write to file " << fileName << std::endl;
+      fps = -1;
+      break;
+    }
     ++count;
   }
 
-  outFile.close();
+  sender.reset();
 
   auto endTime = std::chrono::steady_clock::now();
   auto duration = std::chrono::duration_cast<std::chrono::seconds>(endTime - startTime);

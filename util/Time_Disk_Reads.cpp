@@ -7,6 +7,7 @@
 #include <vector>
 #include <chrono>
 #include <thread>
+#include <ASDP_Core_API.h>
 
 /// @brief Thread function to read data from a file.
 /// @param fileName The name of the file to write to.
@@ -15,23 +16,20 @@
 /// @note This function will read data from the file until the stop flag is set.
 void readFromFile(const std::string& fileName, std::atomic<bool>& stopFlag, double& fps)
 {
-  std::ifstream inFile(fileName, std::ios::binary);
-  if (!inFile.is_open()) {
-    std::cerr << "Error: Failed to open file " << fileName << std::endl;
-    fps = -1;
-    return;
-  }
+  // Use the Core API ReceiverFile object to receive data from the file.
+  std::shared_ptr<asdp::ReceiverFile> receiver = std::make_shared<asdp::ReceiverFile>(fileName);
+
   std::vector<unsigned char> data(1280 * 1024 * 2);
 
   auto startTime = std::chrono::steady_clock::now();
 
   size_t count = 0;
   while (!stopFlag) {
-    inFile.read(reinterpret_cast<char*>(data.data()), data.size());
+    receiver->ReceiveBuffer(data);
     ++count;
   }
 
-  inFile.close();
+  receiver.reset();
 
   auto endTime = std::chrono::steady_clock::now();
   auto duration = std::chrono::duration_cast<std::chrono::seconds>(endTime - startTime);
