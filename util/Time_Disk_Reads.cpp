@@ -25,7 +25,9 @@ void readFromFile(const std::string& fileName, std::atomic<bool>& stopFlag, doub
 
   size_t count = 0;
   while (!stopFlag) {
-    receiver->ReceiveBuffer(data);
+    size_t size = data.size();
+    receiver->ReceiveBuffer(data.data(), size);
+    data.resize(size);
     ++count;
   }
 

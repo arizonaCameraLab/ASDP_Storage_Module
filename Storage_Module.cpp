@@ -149,7 +149,8 @@ std::shared_ptr<Message> Storage_Module::WaitForMessageType(MessageID type, floa
   std::chrono::high_resolution_clock::time_point start = std::chrono::high_resolution_clock::now();
   do {
     std::shared_ptr<StreamPacket> response;
-    Status status = m_stream->ReceiveStreamPacket(0, response);
+    size_t offset = 0;
+    Status status = m_stream->ReceiveStreamPacket(0, response, offset);
     if ((status != OKAY) && (status != TIMEOUT)) {
       return empty;
     }
@@ -376,7 +377,11 @@ Status Storage_Module::ConfigureClientConnection(const MessageState& response)
     }
   }
 
-  // Configure all of the cameras to run from the first unsynchronized trigger at the @todo rate.
+  /// @todo We may want two triggers when we have stereo cameras along with narrow-fields.
+  // Configure the first trigger as a software trigger at the @todo rate and send a trigger.
+  /// @todo
+
+  // Configure all of the cameras to run from the first trigger.
   /// @todo
 
 
