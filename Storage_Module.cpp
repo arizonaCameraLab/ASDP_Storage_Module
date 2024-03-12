@@ -263,6 +263,13 @@ void Storage_Module::ClientThread()
         }
 
         // See if recording at start-up is enabled for this server.  If so, start recording.
+        /// @todo Open the camera files with direct - write specified, but not the TCP stream file.
+        /// @todo Place each new packet into the same large buffer and check each time whether we should write
+        /// @todo When we write a packet, copy the leftover bytes from the last report into the beginning of a new buffer
+        /// @todo Flush the last packet(zero padded) to disk when we stop reading data
+        /// @todo
+
+
         /// @todo
 
       } else {

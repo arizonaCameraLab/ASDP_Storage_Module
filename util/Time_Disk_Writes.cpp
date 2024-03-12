@@ -17,7 +17,8 @@
 void writeToFile(const std::string& fileName, std::atomic<bool>& stopFlag, double &fps)
 {
   // Use the Core API SenderFile object to send data to the file.
-  std::shared_ptr<asdp::SenderFile> sender = std::make_shared<asdp::SenderFile>(fileName);
+  // Open the file in direct-write mode to bypass the file system cache.
+  std::shared_ptr<asdp::SenderFile> sender = std::make_shared<asdp::SenderFile>(fileName, true);
 
   std::vector<unsigned char> data(1280*1024*2);
 
