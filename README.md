@@ -58,7 +58,15 @@ connection requests, with each on its own port.
 
 **Files:** The *StorageRoot* directory will contain a directory for the
 serial number of Core Modules that have been connected.  Each of these contains
-zero or more directories for each session that has been recorded.
+zero or more directories for each session that has been recorded.  There is a file
+named **config.json** in the root directory that contains the configuration information
+for the Storage Module.  The default file (created if there is no file) is shown below:
+  
+  ```
+  {
+    "storingAtRestart": false
+  }
+  ```
 
 ## Utilities
 

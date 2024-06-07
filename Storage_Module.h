@@ -83,6 +83,7 @@ public:
   /// @param NicNameOut The name of the network interface to send outgoing connections on.
   /// @param StorageRoot The root directory for storage.
   /// @param verbosity The verbosity level of the server, 0 for no verbosity, higher for more verbosity.
+  /// A negative verbosity will cause the server not to report error messages to the console.
   Storage_Module(const std::string &NicNameIn, const std::string &NicNameOut,
     const std::string StorageRoot, int verbosity = 0);
 
@@ -111,9 +112,6 @@ protected:
 
   /// The name of the network interface to listen on for outgoing connections.
   std::string m_nicNameOut;
-
-  /// The root directory for storage.
-  std::string m_storageRoot;
 
   //=============================================================================
   // Persistent state that is stored to disk and loaded from disk.
@@ -148,6 +146,26 @@ protected:
     bool m_storingAtRestart;
   };
   PersistentState m_persistentState;
+
+  //=============================================================================
+  // Storage management.
+
+  /// The root directory for storage.
+  std::string m_storageRoot;
+
+  /// The number of cameras on the server we last connected to.
+  size_t m_numCameras;
+
+  std::mutex m_storageMutex;
+  std::vector< std::shared_ptr<SenderFile> > m_storageSenders;
+
+  /// @brief Start storing to disk.
+  /// @return Status indicating success or failure.
+  Status StartStoring();
+
+  /// @brief Stop storing to disk.
+  /// @return Status indicating success or failure.
+  Status StopStoring();
 
   //=============================================================================
   // Helper functions

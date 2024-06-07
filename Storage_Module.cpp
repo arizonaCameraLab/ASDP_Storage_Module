@@ -65,6 +65,7 @@ Storage_Module::Storage_Module(const std::string& NicNameIn, const std::string& 
   , m_nicNameIn(NicNameIn)
   , m_nicNameOut(NicNameOut)
   , m_storageRoot(StorageRoot)
+  , m_numCameras(0)
   , m_persistentState(StorageRoot + "/config.json")
   , m_stop(false)
   , m_nextPort(10101)
@@ -188,17 +189,57 @@ std::shared_ptr<Message> Storage_Module::WaitForMessageType(MessageID type, floa
 
 void Storage_Module::ClientThread()
 {
-  // The Discovery thread is already running, so we don't need to start it here.
-  // We watch for a server to show up in the discovery list, then we connect to it.
+  bool reportedError = false;
+
   while (!m_stop) {
 
     // If we are already connected to a server, check for and handle incoming data.
     if (m_stream != nullptr) {
 
-      /// @todo
+      /// Read all incoming messages on the command channel and store them to the log file and/or
+      /// forward them to a server that is handling this client as appropriate.
+      std::shared_ptr<StreamPacket> response;
+      size_t offset = 0;
+      Status status = m_stream->ReceiveStreamPacket(0, response, offset);
+      if ((status != OKAY) && (status != TIMEOUT)) {
+        m_status = status;
+        return;
+      }
+      if (response != nullptr) {
 
-    // We are not connected to a server, so look for one in the list of identified servers.
+        // Grab the storage file from element 0 in the storage-senders vector, which is the non-camera stream.
+        // Hold the storage mutex while we do so.  We keep the shared_ptr to the sender while we're using it,
+        // so it will persist even if the element is reset.
+        std::shared_ptr<SenderFile> sender;
+        {
+          std::lock_guard<std::mutex> lock(m_storageMutex);
+          if (m_storageSenders.size() > 0) {
+            sender = m_storageSenders[0];
+          }
+        }
+
+        // If we have a valid sender, write the packet to the file.  We ignore the return
+        // status -- if the disk fills up we'll just keep trying and failing to write.
+        if (sender != nullptr) {
+          status = sender->SendStreamPacket(*response);
+          if ((status != OKAY) && (m_verbosity >= 0)) {
+            if (!reportedError) {
+              std::cerr << "Storage_Module::Failed to write packet to storage file: " << ErrorMessage(status) << std::endl
+                << " (Disk full?  No further errors to write will be reported)" << std::endl;
+              reportedError = true;
+            }
+          }
+        }
+
+        // If we have a server associated with this client, forward the message through it.
+        /// @todo
+
+      }
+
     } else {
+      // We are not connected to a server, so look for one in the list of identified servers.
+      // The Discovery thread is already running, so we don't need to start it here.
+      // We watch for a server to show up in the discovery list, then we connect to it.
       std::vector<std::string> servers;
       Status status = IdentifiedServers(servers);
       if (status != OKAY) {
@@ -267,13 +308,16 @@ void Storage_Module::ClientThread()
           return;
         }
 
-        // See if recording at start-up is enabled for this server.  If so, start recording.
-        /// @todo Open the camera files with direct - write specified, but not the TCP stream file.
-        /// @todo Place each new packet into the same large buffer and check each time whether we should write
-        /// @todo When we write a packet, copy the leftover bytes from the last report into the beginning of a new buffer
-        /// @todo Flush the last packet(zero padded) to disk when we stop reading data
-        /// @todo
-
+        // See if recording at start-up is enabled for this server.  If so, craete the structures that
+        // will be used for writing as if we had received the command to start recording.
+        if (m_persistentState.StoringAtRestart()) {
+          status = StartStoring();
+          if (status != OKAY) {
+            // We're broken, so we can't do anything else.  Just set the status and return.
+            m_status = status;
+            return;
+          }
+        }
 
         /// @todo
 
@@ -283,6 +327,74 @@ void Storage_Module::ClientThread()
       }
     }
   }
+}
+
+Status Storage_Module::StartStoring()
+{
+  std::lock_guard<std::mutex> lock(m_storageMutex);
+
+  // Create the appropriate directory to store our files into by finding the lowest unused ID (starting with 0)
+  // that is available in the root directory under our serial number.
+  uint32_t storageID = 0;
+  while (std::filesystem::exists(m_storageRoot + "/" + std::to_string(m_serial) + "/" + std::to_string(storageID))) {
+    storageID++;
+  }
+  std::string dirName = m_storageRoot + "/" + std::to_string(m_serial) + "/" + std::to_string(storageID);
+  if (!std::filesystem::create_directory(dirName)) {
+    if (m_verbosity >= 0) {
+      std::cerr << "Storage_Module::Failed to create directory: "
+        << ErrorMessage(m_storageSenders[0]->GetConstructorStatus()) << std::endl;
+      std::cerr << "  Directory name: " << dirName << std::endl;
+    }
+    return FILE_FAILURE;
+  }
+
+  // Make sure that we have a storage sender for every camera stream (by ID) and for the non-camera stream (stream 0).
+  m_storageSenders.resize(m_numCameras+1);
+
+  // Make a file storage sender for the non-camera stream.  This is not writing in DirectMode.
+  std::string fileName = m_storageRoot + "/" + std::to_string(m_serial) + "/" + std::to_string(storageID) + "/stream0.dat";
+  m_storageSenders[0] = std::make_shared<SenderFile>(fileName, false);
+  if (m_storageSenders[0]->GetConstructorStatus() != OKAY) {
+    if (m_verbosity >= 0) {
+      std::cerr << "Storage_Module::Failed to open storage file for non-camera stream: "
+        << ErrorMessage(m_storageSenders[0]->GetConstructorStatus()) << std::endl;
+      std::cerr << "  File name: " << fileName << std::endl;
+    }
+    return FILE_FAILURE;
+  } else if (m_verbosity > 1) {
+    std::cout << "Storage_Module::Opened storage file for non-camera stream: " << fileName << std::endl;
+  }
+
+  // Make a file storage sender for each camera stream.  These are writing in DirectMode.
+  for (uint32_t i = 1; i <= m_numCameras; i++) {
+    fileName = m_storageRoot + "/" + std::to_string(m_serial) + "/" + std::to_string(storageID) + "/stream" + std::to_string(i) + ".dat";
+    m_storageSenders[i] = std::make_shared<SenderFile>(fileName, true);
+    if (m_storageSenders[i]->GetConstructorStatus() != OKAY) {
+      if (m_verbosity >= 0) {
+        std::cerr << "Storage_Module::Failed to open storage file for camera " + std::to_string(i) << " stream: "
+          << ErrorMessage(m_storageSenders[0]->GetConstructorStatus()) << std::endl;
+        std::cerr << "  File name: " << fileName << std::endl;
+      }
+      return FILE_FAILURE;
+    } else if (m_verbosity > 1) {
+      std::cout << "Storage_Module::Opened storage file for camera stream: " << fileName << std::endl;
+    }
+  }
+
+  return OKAY;
+}
+
+Status Storage_Module::StopStoring()
+{
+  std::lock_guard<std::mutex> lock(m_storageMutex);
+  for (auto sender : m_storageSenders) {
+    sender.reset();
+  }
+
+  /// @todo Flush the last packet(zero padded) to disk when we stop storing data
+
+  return OKAY;
 }
 
 Status Storage_Module::ConstructNewServer(std::shared_ptr<Storage_Module_Server>& server)
@@ -346,6 +458,10 @@ Status Storage_Module::ConfigureClientConnection(const MessageState& response)
   // Get a list of the cameras that the server supports.
   std::vector<CameraInfo> cameras;
   status = response.GetCameras(cameras);
+  if (status != OKAY) {
+    return status;
+  }
+  m_numCameras = cameras.size();
 
   // Open a UDP stream receiver for each camera in the system, connecting it
   // to a thread that will receive and route the data to storage and/or a connected
@@ -406,7 +522,7 @@ Status Storage_Module::ConfigureClientConnection(const MessageState& response)
     }
   }
 
-  /// @todo We may want two triggers when we have stereo cameras along with narrow-fields.
+  /// @todo We may want two triggers when we have stereo cameras along with narrow-field cameras.
 
 
   /// @todo
@@ -420,6 +536,12 @@ void Storage_Module::StreamReceiverThread(std::shared_ptr<ReceiverInfo> receiver
     std::cout << "   Storage_Module::StreamReceiverThread() started" << std::endl;
   }
   while (!m_stop) {
+
+    /// @todo Call the same method that we will use when asked to start recording by a command
+    /// @todo Place each new packet into the same large buffer and check each time whether we should write
+    /// @todo When we write a packet, copy the leftover bytes from the last report into the beginning of a new buffer
+    /// @todo Flush the last packet(zero padded) to disk when we stop storing data
+
     /// @todo
   }
 }
