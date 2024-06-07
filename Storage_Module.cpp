@@ -8,7 +8,10 @@
 #include <limits>
 #include <filesystem>
 #include <thread>
+#include <atomic>
 #include <nlohmann/json.hpp>
+#include <ASDP_BufferPool.h>
+#include <ASDP_SpinFreeQueue.hpp>
 
 using namespace asdp;
 using json = nlohmann::json;
@@ -80,6 +83,30 @@ Storage_Module::Storage_Module(const std::string& NicNameIn, const std::string& 
     m_status = FILE_FAILURE;
     return;
   }
+
+  // Verify that the buffer sizes in the configuration file are valid.
+  if (m_persistentState.DiskBlockSize() < 256) {
+    if (m_verbosity >= 0) {
+      std::cerr << "Storage_Module::Disk block size is too small" << std::endl;
+    }
+    m_status = UNEXPECTED_INTERNAL_STATE;
+    return;
+  }
+  if (m_persistentState.TotalBufferSize() < m_persistentState.HighWaterMark() + 9000) {
+    if (m_verbosity >= 0) {
+      std::cerr << "Storage_Module::High water mark is too small relative to total buffer size" << std::endl;
+    }
+    m_status = UNEXPECTED_INTERNAL_STATE;
+    return;
+  }
+  if (m_persistentState.TotalBufferSize() < 2 * m_persistentState.DiskBlockSize()) {
+    if (m_verbosity >= 0) {
+      std::cerr << "Storage_Module::Total buffer size is too small relative to disk buffer size" << std::endl;
+    }
+    m_status = UNEXPECTED_INTERNAL_STATE;
+    return;
+  }
+  /// @todo
 
   // Start a server thread for each serial number directory found in the storage root.
   // Use the factory function to determine the listening port for each server.
@@ -349,9 +376,6 @@ Status Storage_Module::StartStoring()
     return FILE_FAILURE;
   }
 
-  // Make sure that we have a storage sender for every camera stream (by ID) and for the non-camera stream (stream 0).
-  m_storageSenders.resize(m_numCameras+1);
-
   // Make a file storage sender for the non-camera stream.  This is not writing in DirectMode.
   std::string fileName = m_storageRoot + "/" + std::to_string(m_serial) + "/" + std::to_string(storageID) + "/stream0.dat";
   m_storageSenders[0] = std::make_shared<SenderFile>(fileName, false);
@@ -463,6 +487,9 @@ Status Storage_Module::ConfigureClientConnection(const MessageState& response)
   }
   m_numCameras = cameras.size();
 
+  // Make sure that we have a storage sender entry for every camera stream (by ID) and for the non-camera stream (stream 0).
+  m_storageSenders.resize(m_numCameras + 1);
+
   // Open a UDP stream receiver for each camera in the system, connecting it
   // to a thread that will receive and route the data to storage and/or a connected
   // client depending on our mode of operation.
@@ -478,7 +505,7 @@ Status Storage_Module::ConfigureClientConnection(const MessageState& response)
     }
 
     // Start the stream receiver thread to listen on this receiver.
-    std::shared_ptr<ReceiverInfo> receiverInfo = std::make_shared<ReceiverInfo>(stream);
+    std::shared_ptr<ReceiverInfo> receiverInfo = std::make_shared<ReceiverInfo>(stream, whichCamera);
     m_receiver_threads.emplace_back(std::thread(&Storage_Module::StreamReceiverThread, this, receiverInfo));
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
 
@@ -530,20 +557,125 @@ Status Storage_Module::ConfigureClientConnection(const MessageState& response)
   return OKAY;
 }
 
+/// @brief Structure to hold data describing writing a buffer to disk.
+struct WriteBufferInfo {
+  std::shared_ptr<SenderFile> sender;
+  std::shared_ptr<std::vector<uint8_t>> buffer;
+  size_t bytesToWrite;
+};
+
+/// @brief Helper function to run as a thread that writes data to disk.
+static void WriteBuffersToFile(asdp::SpinFreeQueue<WriteBufferInfo>& writeQueue, std::atomic<bool>& stop)
+{
+  WriteBufferInfo info;
+  while (!stop) {
+    if (writeQueue.dequeue(info, std::chrono::milliseconds(100))) {
+      info.sender->Send(info.buffer->data(), info.bytesToWrite);
+    }
+  }
+}
+
 void Storage_Module::StreamReceiverThread(std::shared_ptr<ReceiverInfo> receiver)
 {
   if (m_verbosity > 3) {
     std::cout << "   Storage_Module::StreamReceiverThread() started" << std::endl;
   }
+
+  // Pool of buffers for receiving data and writing it to disk.  We pre-allocate them here to
+  // avoid the overhead of creating and destroying them at run time.  We pre-allocate a bunch,
+  // but more will be created as needed.
+  asdp::BufferPool bufferPool(m_persistentState.TotalBufferSize(), 100);
+
+  // Start another thread that will be responsible for writing the data to disk, constructing the queue
+  // we will use to send to it and an atomic Boolean that will tell it when to stop.
+  asdp::SpinFreeQueue<WriteBufferInfo> writeQueue;
+  std::atomic<bool> stop(false);
+  std::thread writeThread(WriteBuffersToFile, std::ref(writeQueue), std::ref(stop));
+
+  // Currently-used buffer and the number of bytes in it.
+  std::shared_ptr<std::vector<uint8_t>> buffer = bufferPool.GetBuffer();
+  size_t bytesInBuffer = 0;
+
+  // Keep track of the previously-used stream writer so we can tell when it changes.
+  // It is initially set to nullptr so that we discard packets until storing is started.
+  std::shared_ptr<SenderFile> previousSender;
+  std::shared_ptr<SenderFile> currentSender;
+
   while (!m_stop) {
 
-    /// @todo Call the same method that we will use when asked to start recording by a command
-    /// @todo Place each new packet into the same large buffer and check each time whether we should write
-    /// @todo When we write a packet, copy the leftover bytes from the last report into the beginning of a new buffer
-    /// @todo Flush the last packet(zero padded) to disk when we stop storing data
+    // See if we have changed to a new stream writer.  If so, flush the current buffer to disk and
+    // get a new buffer from the pool.
+    {
+      std::lock_guard<std::mutex> lock(m_storageMutex);
+      currentSender = m_storageSenders[receiver->m_ID];
+    }
+    if (currentSender != previousSender) {
+      // Only write if there is an actual writer and there is data in the buffer.
+      if ((previousSender != nullptr) && (bytesInBuffer > 0)) {
+        WriteBufferInfo info;
+        info.sender = previousSender;
+        info.buffer = buffer;
+        info.bytesToWrite = bytesInBuffer;
+        writeQueue.enqueue(info);
+      }
+      buffer = bufferPool.GetBuffer();
+      bytesInBuffer = 0;
+      previousSender = currentSender;
+    }
 
-    /// @todo
+    // Get the next packet from the stream, adding it to the end of our existing buffer.
+    // Time out after 1 ms so we can check for a stop condition.
+    std::shared_ptr<StreamPacket> packet;
+    Status status = receiver->m_receiver->ReceiveStreamPacket(1e-3, packet, bytesInBuffer, buffer);
+
+    // See if we've reached the high water mark for the buffer.  If so, copy the remaining bytes
+    // past the last full disk block size into a new buffer and then write the full-block-size portion
+    // of the old buffer to disk.
+    if (bytesInBuffer >= m_persistentState.DiskBlockSize()) {
+      // Copy the remaining bytes into a new buffer.
+      std::shared_ptr<std::vector<uint8_t>> newBuffer = bufferPool.GetBuffer();
+      uint32_t bytesToCopy = m_persistentState.DiskBlockSize() * (bytesInBuffer / m_persistentState.DiskBlockSize());
+      std::copy(buffer->data() + bytesToCopy, buffer->data() + bytesInBuffer, newBuffer->data());
+      bytesInBuffer -= bytesToCopy;
+
+      // Write the full block size to disk, if we have an actual sender.
+      if (currentSender != nullptr) {
+        WriteBufferInfo info;
+        info.sender = currentSender;
+        info.buffer = buffer;
+        info.bytesToWrite = bytesToCopy;
+        writeQueue.enqueue(info);
+      }
+
+      // Swap the new buffer into the old buffer.
+      buffer = newBuffer;
+    }
   }
+
+  // Write the last partial buffer to disk if it has any data in it.  First zero-pad it to an even multiple
+  // of the disk block size.
+  if ((currentSender != nullptr) && (bytesInBuffer > 0)) {
+
+    // Pad with zeroes
+    while ((bytesInBuffer < buffer->size()) && (bytesInBuffer % m_persistentState.DiskBlockSize() != 0)) {
+      (*buffer)[bytesInBuffer] = 0;
+      bytesInBuffer++;
+    }
+
+    // Write
+    WriteBufferInfo info;
+    info.sender = m_storageSenders[receiver->m_ID];
+    info.buffer = buffer;
+    info.bytesToWrite = bytesInBuffer;
+    writeQueue.enqueue(info);
+  }
+
+  // Wait for our queue to drain, then stop our sub-thread and wait for it to finish.
+  while (!writeQueue.size()) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+  }
+  stop = true;
+  writeThread.join();
 }
 
 std::string Storage_Module::Test()
@@ -552,12 +684,15 @@ std::string Storage_Module::Test()
 }
 
 Storage_Module::PersistentState::PersistentState(const std::string& filename)
-  : m_storingAtRestart(false)
+  : PersistentState()
 {
-  // If the file does not exist, create it with default values.
+  // If the file does not exist, create it with default values (initialized by the delegated constructor).
   if (!std::filesystem::exists(filename)) {
     json j;
-    j["storingAtRestart"] = false;
+    j["storingAtRestart"] = StoringAtRestart();
+    j["diskBlockSize"] = DiskBlockSize();
+    j["totalBufferSize"] = TotalBufferSize();
+    j["highWaterMark"] = HighWaterMark();
     std::ofstream file(filename);
     if (!file.is_open()) {
       return;
@@ -566,23 +701,61 @@ Storage_Module::PersistentState::PersistentState(const std::string& filename)
     file.close();
   }
 
-  // Read the file and set the values.
+  // Read the file and set the values.  If we can't read one of them, keep the default value.
   std::ifstream file(filename);
   json j;
   file >> j;
-  m_storingAtRestart = j["storingAtRestart"];
+  try {
+    m_storingAtRestart = j["storingAtRestart"];
+  } catch (...) {
+    // Leave it alone.
+  }
+  try {
+    m_diskBlockSize = j["diskBlockSize"];
+  } catch (...) {
+    // Leave it alone.
+  }
+  try {
+    m_totalBufferSize = j["totalBufferSize"];
+  } catch (...) {
+    // Leave it alone.
+  }
+  try {
+    m_highWaterMark = j["highWaterMark"];
+  } catch (...) {
+    // Leave it alone.
+  }
 }
 
 bool Storage_Module::PersistentState::LoadFromFile(std::string const& fileName)
 {
-  // Read the file and set the values.
+  // Read the file and set the values.  If we can't read one of them, keep the default value.
   std::ifstream file(fileName);
   if (!file.is_open()) {
     return false;
   }
   json j;
   file >> j;
-  m_storingAtRestart = j["storingAtRestart"];
+  try {
+    m_storingAtRestart = j["storingAtRestart"];
+  } catch (...) {
+    // Leave it alone.
+  }
+  try {
+    m_diskBlockSize = j["diskBlockSize"];
+  } catch (...) {
+    // Leave it alone.
+  }
+  try {
+    m_totalBufferSize = j["totalBufferSize"];
+  } catch (...) {
+    // Leave it alone.
+  }
+  try {
+    m_highWaterMark = j["highWaterMark"];
+  } catch (...) {
+    // Leave it alone.
+  }
   return true;
 }
 
@@ -590,7 +763,10 @@ bool Storage_Module::PersistentState::SaveToFile(std::string const& fileName) co
 {
   // Write the file and set the values.
   json j;
-  j["storingAtRestart"] = m_storingAtRestart;
+  j["storingAtRestart"] = StoringAtRestart();
+  j["diskBlockSize"] = DiskBlockSize();
+  j["totalBufferSize"] = TotalBufferSize();
+  j["highWaterMark"] = HighWaterMark();
   std::ofstream file(fileName);
   if (!file.is_open()) {
     return false;

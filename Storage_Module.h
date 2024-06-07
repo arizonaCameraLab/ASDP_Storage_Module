@@ -138,12 +138,43 @@ protected:
     /// @brief Set whether we are storing to disk at restart.
     void SetStoringAtRestart(bool storingAtRestart) { m_storingAtRestart = storingAtRestart; }
 
+    /// @brief Get the number of bytes in a disk block.
+    uint32_t DiskBlockSize() const { return m_diskBlockSize; }
+
+    /// @brief Set the number of bytes in a disk block.
+    /// @param diskBlockSize The number of bytes in a disk block. Ensures that we write to disk in multiples of this size.
+    void SetDiskBlockSize(uint32_t diskBlockSize) { m_diskBlockSize = diskBlockSize; }
+
+    /// @brief Get the total buffer size for each UDP ingest stream.
+    uint32_t TotalBufferSize() const { return m_totalBufferSize; }
+
+    /// @brief Set the total buffer size for each UDP ingest stream.
+    /// @param totalBufferSize The total buffer size for each UDP ingest stream.
+    void SetTotalBufferSize(uint32_t totalBufferSize) { m_totalBufferSize = totalBufferSize; }
+
+    /// @brief Get the high-water mark for each UDP ingest stream where it writes to disk if it reaches this size.
+    uint32_t HighWaterMark() const { return m_highWaterMark; }
+
+    /// @brief Set the high-water mark for each UDP ingest stream where it writes to disk if it reaches this size.
+    /// @param highWaterMark The high-water mark for each UDP ingest stream where it writes to disk if it reaches this size.
+    void SetHighWaterMark(uint32_t highWaterMark) { m_highWaterMark = highWaterMark; }
+
   protected:
     /// @brief Default constructor
-    PersistentState() : m_storingAtRestart(false) {};
+    PersistentState() : m_storingAtRestart(false), m_diskBlockSize(1024)
+      , m_totalBufferSize(512*1024), m_highWaterMark(512*1024 - 9000) {};
 
     /// Are we storing to disk at restart?
     bool m_storingAtRestart;
+
+    /// Number of bytes in a disk block.
+    uint32_t m_diskBlockSize;
+
+    /// Total buffer size for each UDP ingest stream
+    uint32_t m_totalBufferSize;
+
+    /// High-water mark for each UDP ingest stream where it writes to disk if it reaches this size.
+    uint32_t m_highWaterMark;
   };
   PersistentState m_persistentState;
 
@@ -218,10 +249,11 @@ protected:
   /// @brief Information about a single receiver.
   struct ReceiverInfo {
     /// @brief Constructor
-    ReceiverInfo(std::shared_ptr<ReceiverUDP> Receiver) :
-      m_receiver(Receiver) { }
+    ReceiverInfo(std::shared_ptr<ReceiverUDP> Receiver, uint32_t ID) :
+      m_receiver(Receiver), m_ID(ID) { }
 
-    std::shared_ptr<ReceiverUDP> m_receiver;
+    std::shared_ptr<ReceiverUDP> m_receiver;  ///< The receiver.
+    uint32_t m_ID;  ///< The ID of the receiver.
   };
 
   std::vector<std::thread> m_receiver_threads;
