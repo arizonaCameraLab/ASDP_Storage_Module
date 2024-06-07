@@ -23,6 +23,17 @@ list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 set_property(GLOBAL PROPERTY USE_FOLDERS ON)
 
 #-----------------------------------------------------------------------------
+# Fetch and build packages
+
+include(FetchContent)
+FetchContent_Declare(
+  json
+  GIT_REPOSITORY https://github.com/arizonaCameraLab/json.git
+  GIT_TAG        9cca280a4d0ccf0c08f47a99aa71d1b0e52f8d03 # Master as of 5/20/2024
+)
+FetchContent_MakeAvailable(json)
+
+#-----------------------------------------------------------------------------
 # Checking for optional and required packages
 
 find_package(Threads REQUIRED)
@@ -74,7 +85,7 @@ target_include_directories(Storage_Module PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>
   $<INSTALL_INTERFACE:include>
 )
-target_link_libraries(Storage_Module ASDP_Core_API::ASDP_Core_API)
+target_link_libraries(Storage_Module ASDP_Core_API::ASDP_Core_API nlohmann_json::nlohmann_json)
 
 #-----------------------------------------------------------------------------
 # Build the module.

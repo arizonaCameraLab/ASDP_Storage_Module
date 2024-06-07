@@ -7,8 +7,11 @@
 #include <algorithm>
 #include <limits>
 #include <filesystem>
+#include <thread>
+#include <nlohmann/json.hpp>
 
 using namespace asdp;
+using json = nlohmann::json;
 
 Storage_Module_Server::Storage_Module_Server(Storage_Module* parent, uint32_t serialNumber, const std::string& NicName,
     uint16_t sendPort, uint16_t listenPort, uint32_t maxPayloadSize, int verbosity)
@@ -62,6 +65,7 @@ Storage_Module::Storage_Module(const std::string& NicNameIn, const std::string& 
   , m_nicNameIn(NicNameIn)
   , m_nicNameOut(NicNameOut)
   , m_storageRoot(StorageRoot)
+  , m_persistentState(StorageRoot + "/config.json")
   , m_stop(false)
   , m_nextPort(10101)
 {
@@ -69,31 +73,32 @@ Storage_Module::Storage_Module(const std::string& NicNameIn, const std::string& 
     return;
   }
 
-  // Read the configuration file from the storage root directory.
-  // If the file doesn't exist, create it with default values.
-  /// @todo
+  // Verify that the storage root directory exists.
+  std::filesystem::path configPath = m_storageRoot;
+  if (!std::filesystem::exists(configPath)) {
+    m_status = FILE_FAILURE;
+    return;
+  }
 
   // Start a server thread for each serial number directory found in the storage root.
   // Use the factory function to determine the listening port for each server.
-  for (const auto& entry : std::filesystem::directory_iterator(StorageRoot)) {
+  for (const auto& entry : std::filesystem::directory_iterator(m_storageRoot)) {
     if (entry.is_directory()) {
       // If we can't convert the name into an unsigned integer, skip it.
       uint32_t serialNumber = 0;
       try {
         serialNumber = std::stoul(entry.path().filename().string());
-      } catch(...) {
-        serialNumber = 0;
-      }
-      if (serialNumber > 0) {
         if (verbosity > 1) {
           std::cout << " Storage_Module::Starting server for serial# " << serialNumber << std::endl;
         }
         m_servers.emplace_back(
           std::make_shared<ServerInfo>(
-          serialNumber,
-          std::make_shared<Storage_Module_Server>(this, serialNumber, NicNameOut,
-            10102, m_nextPort.fetch_sub(1), 9000 - 28, verbosity)));
+            serialNumber,
+            std::make_shared<Storage_Module_Server>(this, serialNumber, NicNameOut,
+              10102, m_nextPort.fetch_sub(1), 9000 - 28, verbosity)));
         m_server_threads.emplace_back(std::thread(&Storage_Module::ServerThread, this, m_servers.back()));
+      } catch(...) {
+        // Nothing to do here.
       }
     }
   }
@@ -290,7 +295,7 @@ Status Storage_Module::ConstructNewServer(std::shared_ptr<Storage_Module_Server>
   std::filesystem::path dirPath = m_storageRoot;
   dirPath /= std::to_string(m_serial);
   if (std::filesystem::exists(dirPath)) {
-    // This should not exist.
+    // This should not happen.
     return UNEXPECTED_INTERNAL_STATE;
   }
   std::filesystem::create_directory(dirPath);
@@ -316,7 +321,7 @@ Status Storage_Module::ConfigureClientConnection(const MessageState& response)
     return status;
   }
 
-  // Enable streaming for each of them.
+  // Enable streaming for each of them that we can receive.
   for (auto feature : features) {
     switch (feature) {
       case TEMPERATURE_API_AVAILABLE:
@@ -359,6 +364,23 @@ Status Storage_Module::ConfigureClientConnection(const MessageState& response)
     // Start the stream receiver thread to listen on this receiver.
     std::shared_ptr<ReceiverInfo> receiverInfo = std::make_shared<ReceiverInfo>(stream);
     m_receiver_threads.emplace_back(std::thread(&Storage_Module::StreamReceiverThread, this, receiverInfo));
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+
+    // Find the minimum period for the camera and which internal trigger ID it uses, then
+    // configure the trigger to run at that rate.
+    TriggerInfo ti;
+    ti.ID = camera.trigger;
+    ti.mode = 1;
+    ti.period = camera.minTriggerPeriod;
+    ti.offset = 0;
+    ti.trackingFactor = 0.5;
+    status = SendCommandPacket(CommandPacketConfigureTrigger(ti));
+    if (status != OKAY) {
+      return status;
+    }
+    if (m_verbosity > 3) {
+      std::cout << "   Configured trigger for camera " << whichCamera << " with period " << ti.period << " seconds" << std::endl;
+    }
 
     // Request the server to start streaming data from this camera.
     SubregionDescription subregion;
@@ -385,11 +407,6 @@ Status Storage_Module::ConfigureClientConnection(const MessageState& response)
   }
 
   /// @todo We may want two triggers when we have stereo cameras along with narrow-fields.
-  // Configure the first trigger as a software trigger at the @todo rate and send a trigger.
-  /// @todo
-
-  // Configure all of the cameras to run from the first trigger.
-  /// @todo
 
 
   /// @todo
@@ -399,8 +416,8 @@ Status Storage_Module::ConfigureClientConnection(const MessageState& response)
 
 void Storage_Module::StreamReceiverThread(std::shared_ptr<ReceiverInfo> receiver)
 {
-  if (m_verbosity > 2) {
-    std::cout << "  Storage_Module::StreamReceiverThread() started" << std::endl;
+  if (m_verbosity > 3) {
+    std::cout << "   Storage_Module::StreamReceiverThread() started" << std::endl;
   }
   while (!m_stop) {
     /// @todo
@@ -410,4 +427,52 @@ void Storage_Module::StreamReceiverThread(std::shared_ptr<ReceiverInfo> receiver
 std::string Storage_Module::Test()
 {
   return "@todo implement Test()";
+}
+
+Storage_Module::PersistentState::PersistentState(const std::string& filename)
+  : m_storingAtRestart(false)
+{
+  // If the file does not exist, create it with default values.
+  if (!std::filesystem::exists(filename)) {
+    json j;
+    j["storingAtRestart"] = false;
+    std::ofstream file(filename);
+    if (!file.is_open()) {
+      return;
+    }
+    file << j.dump(2);
+    file.close();
+  }
+
+  // Read the file and set the values.
+  std::ifstream file(filename);
+  json j;
+  file >> j;
+  m_storingAtRestart = j["storingAtRestart"];
+}
+
+bool Storage_Module::PersistentState::LoadFromFile(std::string const& fileName)
+{
+  // Read the file and set the values.
+  std::ifstream file(fileName);
+  if (!file.is_open()) {
+    return false;
+  }
+  json j;
+  file >> j;
+  m_storingAtRestart = j["storingAtRestart"];
+  return true;
+}
+
+bool Storage_Module::PersistentState::SaveToFile(std::string const& fileName) const
+{
+  // Write the file and set the values.
+  json j;
+  j["storingAtRestart"] = m_storingAtRestart;
+  std::ofstream file(fileName);
+  if (!file.is_open()) {
+    return false;
+  }
+  file << j.dump(2);
+  return true;
 }

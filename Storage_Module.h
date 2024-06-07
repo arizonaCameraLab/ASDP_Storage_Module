@@ -116,6 +116,40 @@ protected:
   std::string m_storageRoot;
 
   //=============================================================================
+  // Persistent state that is stored to disk and loaded from disk.
+
+  class PersistentState {
+  public:
+    /// @brief Constructor
+    /// @param fileName The name of a file to read the state from.  If the file does not
+    /// exist, the state will be initialized to default values and then written to the file.
+    /// If the file cannot be created, the state will still be initialized to default values.
+    PersistentState(std::string const &fileName);
+
+    /// @brief Load the state from disk.
+    /// @return Status indicating success or failure.
+    bool LoadFromFile(std::string const& fileName);
+
+    /// @brief Save the state to disk.
+    /// @return Status indicating success or failure.
+    bool SaveToFile(std::string const& fileName) const;
+
+    /// @brief Find out whether we are storing to disk at restart.
+    bool StoringAtRestart() const { return m_storingAtRestart; }
+
+    /// @brief Set whether we are storing to disk at restart.
+    void SetStoringAtRestart(bool storingAtRestart) { m_storingAtRestart = storingAtRestart; }
+
+  protected:
+    /// @brief Default constructor
+    PersistentState() : m_storingAtRestart(false) {};
+
+    /// Are we storing to disk at restart?
+    bool m_storingAtRestart;
+  };
+  PersistentState m_persistentState;
+
+  //=============================================================================
   // Helper functions
 
   /// @brief Wait for a message of the specified type to arrive.
