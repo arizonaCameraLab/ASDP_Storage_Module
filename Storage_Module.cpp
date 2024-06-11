@@ -21,6 +21,7 @@ Storage_Module_Server::Storage_Module_Server(Storage_Module* parent, uint32_t se
   : CoreServerBase(serialNumber, NicName, sendPort, listenPort, maxPayloadSize, verbosity)
   , m_parent(parent)
 {
+
   /// @todo
 }
 
@@ -58,6 +59,43 @@ void Storage_Module_Server::doStreamSubregion(const CommandPacketStreamSubregion
 void Storage_Module_Server::doCancelSubregion(const CommandPacketCancelSubregion& command, ClientState& client)
 {
   m_error = "@todo implement doCancelSubregion";
+}
+
+void Storage_Module_Server::doStartRecording(const CommandPacketStartRecording& command, ClientState& client)
+{
+  std::lock_guard<std::mutex> lock(m_parent->m_storageMutex);
+
+  // If the parent has the same serial number as we do, then try to start storing on it and set our state.
+  // Otherwise, we ignore the command because we can only replay and not store.
+  if (m_parent->m_serial == m_serial) {
+    m_error = ErrorMessage(m_parent->StartStoring());
+  }
+}
+
+void Storage_Module_Server::doStopRecording(const CommandPacketStopRecording& command, ClientState& client)
+{
+  std::lock_guard<std::mutex> lock(m_parent->m_storageMutex);
+
+  // If the parent has the same serial number as we do, then try to stop storing on it and set our state.
+  // Otherwise, we ignore the command because we can only replay and not store.
+  if (m_parent->m_serial == m_serial) {
+    m_error = ErrorMessage(m_parent->StopStoring());
+  }
+}
+
+void Storage_Module_Server::doSetStartUpRecordingState(const CommandPacketSetStartUpRecordingState& command, ClientState& client)
+{
+  std::lock_guard<std::mutex> lock(m_parent->m_storageMutex);
+  uint32_t state;
+  Status status = command.GetState(state);
+  if (status != OKAY) {
+    m_error = ErrorMessage(status);
+    return;
+  }
+  m_parent->m_persistentState.SetStoringAtRestart(state != 0);
+  if (!m_parent->m_persistentState.SaveToFile()) {
+    m_error = "Failed to save persistent-state file";
+  }
 }
 
 Storage_Module::Storage_Module(const std::string& NicNameIn, const std::string& NicNameOut,
@@ -106,7 +144,6 @@ Storage_Module::Storage_Module(const std::string& NicNameIn, const std::string& 
     m_status = UNEXPECTED_INTERNAL_STATE;
     return;
   }
-  /// @todo
 
   // Start a server thread for each serial number directory found in the storage root.
   // Use the factory function to determine the listening port for each server.
@@ -133,8 +170,6 @@ Storage_Module::Storage_Module(const std::string& NicNameIn, const std::string& 
 
   // Start the client thread
   m_client_thread = std::thread(&Storage_Module::ClientThread, this);
-
-  /// @todo
 
   if (m_verbosity > 0) {
     std::cout << "Storage_Module::Storage_Module() constructed" << std::endl;
@@ -229,7 +264,8 @@ void Storage_Module::ClientThread()
       size_t offset = 0;
       Status status = m_stream->ReceiveStreamPacket(0, response, offset);
       if ((status != OKAY) && (status != TIMEOUT)) {
-        m_status = status;
+        // Drop the connection and we'll automatically try to reconnect later.
+        m_stream.reset();
         return;
       }
       if (response != nullptr) {
@@ -259,6 +295,7 @@ void Storage_Module::ClientThread()
         }
 
         // If we have a server associated with this client, forward the message through it.
+        // Squash any state message and do not pass it on.
         /// @todo
 
       }
@@ -346,8 +383,6 @@ void Storage_Module::ClientThread()
           }
         }
 
-        /// @todo
-
       } else {
         // Sleep briefly to keep from hogging the CPU while we're not connected.
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
@@ -412,11 +447,11 @@ Status Storage_Module::StartStoring()
 Status Storage_Module::StopStoring()
 {
   std::lock_guard<std::mutex> lock(m_storageMutex);
+
+  // Close all the storage senders.
   for (auto sender : m_storageSenders) {
     sender.reset();
   }
-
-  /// @todo Flush the last packet(zero padded) to disk when we stop storing data
 
   return OKAY;
 }
@@ -551,8 +586,7 @@ Status Storage_Module::ConfigureClientConnection(const MessageState& response)
 
   /// @todo We may want two triggers when we have stereo cameras along with narrow-field cameras.
 
-
-  /// @todo
+  /// @todo Set the relevant state values in the server to those of the client we just connected to.
 
   return OKAY;
 }
@@ -612,6 +646,13 @@ void Storage_Module::StreamReceiverThread(std::shared_ptr<ReceiverInfo> receiver
     if (currentSender != previousSender) {
       // Only write if there is an actual writer and there is data in the buffer.
       if ((previousSender != nullptr) && (bytesInBuffer > 0)) {
+        // Pad with zeroes to an even number of block sizes.
+        while ((bytesInBuffer < buffer->size()) && (bytesInBuffer % m_persistentState.DiskBlockSize() != 0)) {
+          (*buffer)[bytesInBuffer] = 0;
+          bytesInBuffer++;
+        }
+
+        // Write
         WriteBufferInfo info;
         info.sender = previousSender;
         info.buffer = buffer;
@@ -656,7 +697,7 @@ void Storage_Module::StreamReceiverThread(std::shared_ptr<ReceiverInfo> receiver
   // of the disk block size.
   if ((currentSender != nullptr) && (bytesInBuffer > 0)) {
 
-    // Pad with zeroes
+    // Pad with zeroes to an even number of block sizes.
     while ((bytesInBuffer < buffer->size()) && (bytesInBuffer % m_persistentState.DiskBlockSize() != 0)) {
       (*buffer)[bytesInBuffer] = 0;
       bytesInBuffer++;
@@ -686,6 +727,9 @@ std::string Storage_Module::Test()
 Storage_Module::PersistentState::PersistentState(const std::string& filename)
   : PersistentState()
 {
+  // Store our file name for later use in loading and saving.
+  m_fileName = filename;
+
   // If the file does not exist, create it with default values (initialized by the delegated constructor).
   if (!std::filesystem::exists(filename)) {
     json j;
@@ -702,35 +746,13 @@ Storage_Module::PersistentState::PersistentState(const std::string& filename)
   }
 
   // Read the file and set the values.  If we can't read one of them, keep the default value.
-  std::ifstream file(filename);
-  json j;
-  file >> j;
-  try {
-    m_storingAtRestart = j["storingAtRestart"];
-  } catch (...) {
-    // Leave it alone.
-  }
-  try {
-    m_diskBlockSize = j["diskBlockSize"];
-  } catch (...) {
-    // Leave it alone.
-  }
-  try {
-    m_totalBufferSize = j["totalBufferSize"];
-  } catch (...) {
-    // Leave it alone.
-  }
-  try {
-    m_highWaterMark = j["highWaterMark"];
-  } catch (...) {
-    // Leave it alone.
-  }
+  LoadFromFile();
 }
 
-bool Storage_Module::PersistentState::LoadFromFile(std::string const& fileName)
+bool Storage_Module::PersistentState::LoadFromFile()
 {
   // Read the file and set the values.  If we can't read one of them, keep the default value.
-  std::ifstream file(fileName);
+  std::ifstream file(m_fileName);
   if (!file.is_open()) {
     return false;
   }
@@ -759,7 +781,7 @@ bool Storage_Module::PersistentState::LoadFromFile(std::string const& fileName)
   return true;
 }
 
-bool Storage_Module::PersistentState::SaveToFile(std::string const& fileName) const
+bool Storage_Module::PersistentState::SaveToFile() const
 {
   // Write the file and set the values.
   json j;
@@ -767,7 +789,7 @@ bool Storage_Module::PersistentState::SaveToFile(std::string const& fileName) co
   j["diskBlockSize"] = DiskBlockSize();
   j["totalBufferSize"] = TotalBufferSize();
   j["highWaterMark"] = HighWaterMark();
-  std::ofstream file(fileName);
+  std::ofstream file(m_fileName);
   if (!file.is_open()) {
     return false;
   }

@@ -66,6 +66,9 @@ protected:
   void doCancelSubregion(const CommandPacketCancelSubregion&, ClientState& client) override;
 
   /// @todo Override the other methods as needed.
+  void doStartRecording(const CommandPacketStartRecording& command, ClientState& client) override;
+  void doStopRecording(const CommandPacketStopRecording& command, ClientState& client) override;
+  void doSetStartUpRecordingState(const CommandPacketSetStartUpRecordingState& command, ClientState& client) override;
 };
 
 /// @brief Storage module that acts as an intermediary between Core Modules and other clients.
@@ -126,11 +129,11 @@ protected:
 
     /// @brief Load the state from disk.
     /// @return Status indicating success or failure.
-    bool LoadFromFile(std::string const& fileName);
+    bool LoadFromFile();
 
     /// @brief Save the state to disk.
     /// @return Status indicating success or failure.
-    bool SaveToFile(std::string const& fileName) const;
+    bool SaveToFile() const;
 
     /// @brief Find out whether we are storing to disk at restart.
     bool StoringAtRestart() const { return m_storingAtRestart; }
@@ -163,6 +166,9 @@ protected:
     /// @brief Default constructor
     PersistentState() : m_storingAtRestart(false), m_diskBlockSize(1024)
       , m_totalBufferSize(512*1024), m_highWaterMark(512*1024 - 9000) {};
+
+    /// File that we are associated with.
+    std::string m_fileName;
 
     /// Are we storing to disk at restart?
     bool m_storingAtRestart;
