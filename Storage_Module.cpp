@@ -96,6 +96,7 @@ void Storage_Module_Server::doSetStartUpRecordingState(const CommandPacketSetSta
   if (!m_parent->m_persistentState.SaveToFile()) {
     m_error = "Failed to save persistent-state file";
   }
+  m_recordOnReset = m_parent->m_persistentState.StoringAtRestart();
 }
 
 Storage_Module::Storage_Module(const std::string& NicNameIn, const std::string& NicNameOut,
@@ -372,7 +373,7 @@ void Storage_Module::ClientThread()
           return;
         }
 
-        // See if recording at start-up is enabled for this server.  If so, craete the structures that
+        // See if recording at start-up is enabled for this server.  If so, create the structures that
         // will be used for writing as if we had received the command to start recording.
         if (m_persistentState.StoringAtRestart()) {
           status = StartStoring();
