@@ -69,6 +69,7 @@ protected:
   void doStartRecording(const CommandPacketStartRecording& command, ClientState& client) override;
   void doStopRecording(const CommandPacketStopRecording& command, ClientState& client) override;
   void doSetStartUpRecordingState(const CommandPacketSetStartUpRecordingState& command, ClientState& client) override;
+  void doListStoredStreams(const CommandPacketListStoredStreams& command, ClientState& client) override;
 
   friend class Storage_Module;
 };

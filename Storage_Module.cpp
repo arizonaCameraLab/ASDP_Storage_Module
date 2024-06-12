@@ -107,6 +107,55 @@ void Storage_Module_Server::doSetStartUpRecordingState(const CommandPacketSetSta
   m_recordOnReset = m_parent->m_persistentState.StoringAtRestart();
 }
 
+void Storage_Module_Server::doListStoredStreams(const CommandPacketListStoredStreams& command, ClientState& client)
+{
+  // Find a list of directory names in the storage root directory for our serial number.
+  // Select the ones that can be parsed as unsigned integers.
+  std::vector<uint32_t> storedStreamIDs;
+  std::filesystem::path dirPath = m_parent->m_storageRoot;
+  dirPath /= std::to_string(m_serial);
+  for (const auto& entry : std::filesystem::directory_iterator(dirPath)) {
+    uint32_t streamID = 0;
+    try {
+      streamID = std::stoul(entry.path().filename().string());
+      storedStreamIDs.push_back(streamID);
+    } catch(...) {
+      // Nothing to do here.
+    }
+  }
+
+  // Send the list of stored streams back to the client.
+  Status status;
+  /// @todo
+  Time timeCode;
+  status = m_timer->GetCoreTime(timeCode);
+  if (status != OKAY) {
+    m_error = "doListStoredStreams(): Error getting time: " + ErrorMessage(status);
+    return;
+  }
+  for (auto& client : m_clients) {
+    std::shared_ptr<StreamPacket> packet;
+    status = client.m_writer->GetCurrentPacket(packet);
+    if (status != OKAY) {
+      m_error = "doListStoredStreams(): Error getting current packet: " + ErrorMessage(status);
+      return;
+    }
+
+    MessageStoredStreamList message(*packet, timeCode, storedStreamIDs);
+    if (message.GetConstructorStatus() != OKAY) {
+      m_error = "doListStoredStreams(): Error constructing MessageStoredStreamList: " + ErrorMessage(message.GetConstructorStatus());
+      return;
+    }
+
+    // Send the packet.
+    status = client.m_writer->Flush();
+    if (status != OKAY) {
+      m_error = "doListStoredStreams(): Error flushing StreamWriter: " + ErrorMessage(status);
+      return;
+    }
+  }
+}
+
 Storage_Module::Storage_Module(const std::string& NicNameIn, const std::string& NicNameOut,
                                const std::string StorageRoot, int verbosity)
   : CoreClient(NicNameIn)
@@ -280,9 +329,17 @@ void Storage_Module::ClientThread()
       size_t offset = 0;
       Status status = m_stream->ReceiveStreamPacket(0, response, offset);
       if ((status != OKAY) && (status != TIMEOUT)) {
+        if (m_verbosity > 1) {
+          std::cout << " Storage_Module::Disconnected from server with serial# " << m_serial << std::endl;
+        }
+        std::lock_guard<std::mutex> lock(m_storageMutex);
+
         // Drop the connection and we'll automatically try to reconnect later.
         m_stream.reset();
-        return;
+        m_server->m_storing = false;
+        m_server.reset();
+        m_storageSenders.clear();
+        continue;
       }
       if (response != nullptr) {
 
@@ -333,9 +390,9 @@ void Storage_Module::ClientThread()
         uint16_t major, minor, patch;
         Status status = ConnectToServer(servers[0], major, minor, patch);
         if (status != OKAY) {
-          // We're broken, so we can't do anything else.  Just set the status and return.
-          m_status = status;
-          return;
+          // Could not connect to the server.  Skip this round and try again later.
+          std::this_thread::sleep_for(std::chrono::milliseconds(100));
+          continue;
         }
         if (m_verbosity > 1) {
           std::cout << " Storage_Module::Connected to server " << servers[0] << ", serial# " << m_serial << std::endl;
@@ -444,7 +501,7 @@ Status Storage_Module::StartStoring()
     }
     return FILE_FAILURE;
   } else if (m_verbosity > 1) {
-    std::cout << "Storage_Module::Opened storage file for non-camera stream: " << fileName << std::endl;
+    std::cout << " Storage_Module::Opened storage file for non-camera stream: " << fileName << std::endl;
   }
 
   // Make a file storage sender for each camera stream.  These are writing in DirectMode.
@@ -459,7 +516,7 @@ Status Storage_Module::StartStoring()
       }
       return FILE_FAILURE;
     } else if (m_verbosity > 1) {
-      std::cout << "Storage_Module::Opened storage file for camera stream: " << fileName << std::endl;
+      std::cout << " Storage_Module::Opened storage file for camera stream: " << fileName << std::endl;
     }
   }
 
