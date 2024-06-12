@@ -21,6 +21,12 @@ Storage_Module_Server::Storage_Module_Server(Storage_Module* parent, uint32_t se
   : CoreServerBase(serialNumber, NicName, sendPort, listenPort, maxPayloadSize, verbosity)
   , m_parent(parent)
 {
+  // Set our state to match the parent's state where appropriate.
+  m_recordOnReset = m_parent->m_persistentState.StoringAtRestart();
+  m_storing = m_parent->m_storageSenders.size() > 0;
+
+  // Add the storage API to our features.
+  m_features.push_back(STORAGE_API_AVAILABLE);
 
   /// @todo
 }
@@ -63,23 +69,25 @@ void Storage_Module_Server::doCancelSubregion(const CommandPacketCancelSubregion
 
 void Storage_Module_Server::doStartRecording(const CommandPacketStartRecording& command, ClientState& client)
 {
-  std::lock_guard<std::mutex> lock(m_parent->m_storageMutex);
-
-  // If the parent has the same serial number as we do, then try to start storing on it and set our state.
+  // If the parent has the same serial number as we do, then try to start storing on it (which will also set our state).
   // Otherwise, we ignore the command because we can only replay and not store.
   if (m_parent->m_serial == m_serial) {
-    m_error = ErrorMessage(m_parent->StartStoring());
+    Status status = m_parent->StartStoring();
+    if (status != OKAY) {
+      m_error = ErrorMessage(status);
+    }
   }
 }
 
 void Storage_Module_Server::doStopRecording(const CommandPacketStopRecording& command, ClientState& client)
 {
-  std::lock_guard<std::mutex> lock(m_parent->m_storageMutex);
-
-  // If the parent has the same serial number as we do, then try to stop storing on it and set our state.
+  // If the parent has the same serial number as we do, then try to stop storing on it (which will also set our state).
   // Otherwise, we ignore the command because we can only replay and not store.
   if (m_parent->m_serial == m_serial) {
-    m_error = ErrorMessage(m_parent->StopStoring());
+    Status status = m_parent->StopStoring();
+    if (status != OKAY) {
+      m_error = ErrorMessage(status);
+    }
   }
 }
 
@@ -179,8 +187,12 @@ Storage_Module::Storage_Module(const std::string& NicNameIn, const std::string& 
 
 Storage_Module::~Storage_Module()
 {
+  if (m_verbosity > 0) {
+    std::cout << "Storage_Module::~Storage_Module() stopping" << std::endl;
+  }
+
   // Stop all threads and wait for them to finish
-  m_stop = false;
+  m_stop = true;
 
   for (auto& thread : m_server_threads) {
     if (thread.joinable()) {
@@ -208,6 +220,9 @@ void Storage_Module::ServerThread(std::shared_ptr<ServerInfo> server)
   std::string ret = server->m_server->run();
   if (!m_stop) {
     // If we're not stopping, then we had an error.
+    if (m_verbosity >= 0) {
+      std::cerr << "Storage_Module::ServerThread() run completed before stopping with error: " << ret << std::endl;
+    }
     m_status = UNEXPECTED_INTERNAL_STATE;
   }
 }
@@ -288,6 +303,7 @@ void Storage_Module::ClientThread()
           status = sender->SendStreamPacket(*response);
           if ((status != OKAY) && (m_verbosity >= 0)) {
             if (!reportedError) {
+
               std::cerr << "Storage_Module::Failed to write packet to storage file: " << ErrorMessage(status) << std::endl
                 << " (Disk full?  No further errors to write will be reported)" << std::endl;
               reportedError = true;
@@ -396,6 +412,11 @@ Status Storage_Module::StartStoring()
 {
   std::lock_guard<std::mutex> lock(m_storageMutex);
 
+  // Ensure that we are connected to a server before we start storing (we will have storage server pointers).
+  if (m_storageSenders.size() == 0) {
+    return OKAY;
+  }
+
   // Create the appropriate directory to store our files into by finding the lowest unused ID (starting with 0)
   // that is available in the root directory under our serial number.
   uint32_t storageID = 0;
@@ -442,6 +463,9 @@ Status Storage_Module::StartStoring()
     }
   }
 
+  // Set the flag that we are storing in our server.
+  m_server->m_storing = true;
+
   return OKAY;
 }
 
@@ -449,10 +473,18 @@ Status Storage_Module::StopStoring()
 {
   std::lock_guard<std::mutex> lock(m_storageMutex);
 
+  // Ensure that we are connected to a server before we start storing (we will have storage server pointers).
+  if (m_storageSenders.size() == 0) {
+    return OKAY;
+  }
+
   // Close all the storage senders.
   for (auto sender : m_storageSenders) {
     sender.reset();
   }
+
+  // Set the flag that we are not storing in our server.
+  m_server->m_storing = false;
 
   return OKAY;
 }
@@ -511,6 +543,9 @@ Status Storage_Module::ConfigureClientConnection(const MessageState& response)
         break;
       default:
         // We never heard of this feature, so we can't enable it.
+        if (m_verbosity >= 0) {
+          std::cerr << "Storage_Module::Unknown feature ID: " << feature << std::endl;
+        }
         return UNEXPECTED_INTERNAL_STATE;
     }
   }
