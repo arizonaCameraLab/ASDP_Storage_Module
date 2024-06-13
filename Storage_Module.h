@@ -70,6 +70,8 @@ protected:
   void doStopRecording(const CommandPacketStopRecording& command, ClientState& client) override;
   void doSetStartUpRecordingState(const CommandPacketSetStartUpRecordingState& command, ClientState& client) override;
   void doListStoredStreams(const CommandPacketListStoredStreams& command, ClientState& client) override;
+  void doEraseStoredStream(const CommandPacketEraseStoredStream& command, ClientState& client);
+  void doEraseAllStoredStreams(const CommandPacketEraseAllStoredStreams& command, ClientState& client);
 
   friend class Storage_Module;
 };
@@ -198,6 +200,7 @@ protected:
 
   std::mutex m_storageMutex;
   std::vector< std::shared_ptr<SenderFile> > m_storageSenders;
+  uint16_t m_writingToID;   ///< The ID of the session we are writing, 0 for none
 
   /// @brief Start storing to disk.
   /// @return Status indicating success or failure.

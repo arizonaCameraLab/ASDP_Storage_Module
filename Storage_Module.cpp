@@ -23,7 +23,7 @@ Storage_Module_Server::Storage_Module_Server(Storage_Module* parent, uint32_t se
 {
   // Set our state to match the parent's state where appropriate.
   m_recordOnReset = m_parent->m_persistentState.StoringAtRestart();
-  m_storing = m_parent->m_storageSenders.size() > 0;
+  m_storing = m_parent->m_writingToID > 0;
 
   // Add the storage API to our features.
   m_features.push_back(STORAGE_API_AVAILABLE);
@@ -109,6 +109,8 @@ void Storage_Module_Server::doSetStartUpRecordingState(const CommandPacketSetSta
 
 void Storage_Module_Server::doListStoredStreams(const CommandPacketListStoredStreams& command, ClientState& client)
 {
+  std::lock_guard<std::mutex> lock(m_parent->m_storageMutex);
+
   // Find a list of directory names in the storage root directory for our serial number.
   // Select the ones that can be parsed as unsigned integers.
   std::vector<uint32_t> storedStreamIDs;
@@ -123,10 +125,10 @@ void Storage_Module_Server::doListStoredStreams(const CommandPacketListStoredStr
       // Nothing to do here.
     }
   }
+  std::sort(storedStreamIDs.begin(), storedStreamIDs.end());
 
   // Send the list of stored streams back to the client.
   Status status;
-  /// @todo
   Time timeCode;
   status = m_timer->GetCoreTime(timeCode);
   if (status != OKAY) {
@@ -156,6 +158,74 @@ void Storage_Module_Server::doListStoredStreams(const CommandPacketListStoredStr
   }
 }
 
+void Storage_Module_Server::doEraseAllStoredStreams(const CommandPacketEraseAllStoredStreams& command, ClientState& client)
+{
+  std::lock_guard<std::mutex> lock(m_parent->m_storageMutex);
+
+  // Find a list of directory names in the storage root directory for our serial number.
+  // Select the ones that can be parsed as unsigned integers.
+  std::vector<uint32_t> storedStreamIDs;
+  std::filesystem::path dirPath = m_parent->m_storageRoot;
+  dirPath /= std::to_string(m_serial);
+  for (const auto& entry : std::filesystem::directory_iterator(dirPath)) {
+    uint32_t streamID = 0;
+    try {
+      streamID = std::stoul(entry.path().filename().string());
+      storedStreamIDs.push_back(streamID);
+    } catch (const std::filesystem::filesystem_error& e) {
+      // Ignore any errors that occur while deleting the directories.
+    }
+  }
+
+  // Avoid deleting a stream that is currently being written to.
+  // Remove the currently-storing stream ID from the list if there is one.
+  if (m_parent->m_writingToID > 0) {
+    auto it = std::find(storedStreamIDs.begin(), storedStreamIDs.end(), m_parent->m_writingToID);
+    if (it != storedStreamIDs.end()) {
+      storedStreamIDs.erase(it);
+    }
+  }
+
+  // Erase all the stored streams remaining in the list by recursively removing their directory tree.
+  for (auto streamID : storedStreamIDs) {
+    std::filesystem::path streamPath = dirPath;
+    streamPath /= std::to_string(streamID);
+    try {
+      std::filesystem::remove_all(streamPath);
+    } catch (const std::filesystem::filesystem_error& e) {
+      // Ignore any errors that occur while deleting the directories.
+    }
+  }
+}
+
+void Storage_Module_Server::doEraseStoredStream(const CommandPacketEraseStoredStream& command, ClientState& client)
+{
+  std::lock_guard<std::mutex> lock(m_parent->m_storageMutex);
+
+  // Find the ID of the stream to erase.
+  uint32_t streamID;
+  Status status = command.GetID(streamID);
+  if (status != OKAY) {
+    m_error = "doListStoredStreams(): " + ErrorMessage(status);
+    return;
+  }
+
+  // Avoid deleting a stream that is currently being written to (do nothing).
+  if (streamID == m_parent->m_writingToID) {
+    return;
+  }
+
+  // Erase the stored stream by removing its directory tree.
+  std::filesystem::path streamPath = m_parent->m_storageRoot;
+  streamPath /= std::to_string(m_serial);
+  streamPath /= std::to_string(streamID);
+  try {
+    std::filesystem::remove_all(streamPath);
+  } catch (const std::filesystem::filesystem_error& e) {
+    // Ignore any errors that occur while deleting the directories.
+  }
+}
+
 Storage_Module::Storage_Module(const std::string& NicNameIn, const std::string& NicNameOut,
                                const std::string StorageRoot, int verbosity)
   : CoreClient(NicNameIn)
@@ -165,6 +235,7 @@ Storage_Module::Storage_Module(const std::string& NicNameIn, const std::string& 
   , m_nicNameOut(NicNameOut)
   , m_storageRoot(StorageRoot)
   , m_numCameras(0)
+  , m_writingToID(0)
   , m_persistentState(StorageRoot + "/config.json")
   , m_stop(false)
   , m_nextPort(10101)
@@ -338,7 +409,9 @@ void Storage_Module::ClientThread()
         m_stream.reset();
         m_server->m_storing = false;
         m_server.reset();
-        m_storageSenders.clear();
+        for (auto& sender : m_storageSenders) {
+          sender.reset();
+        }
         continue;
       }
       if (response != nullptr) {
@@ -474,9 +547,9 @@ Status Storage_Module::StartStoring()
     return OKAY;
   }
 
-  // Create the appropriate directory to store our files into by finding the lowest unused ID (starting with 0)
+  // Create the appropriate directory to store our files into by finding the lowest unused ID (starting with 1)
   // that is available in the root directory under our serial number.
-  uint32_t storageID = 0;
+  uint32_t storageID = 1;
   while (std::filesystem::exists(m_storageRoot + "/" + std::to_string(m_serial) + "/" + std::to_string(storageID))) {
     storageID++;
   }
@@ -520,6 +593,9 @@ Status Storage_Module::StartStoring()
     }
   }
 
+  // Record where we are storing to.
+  m_writingToID = storageID;
+
   // Set the flag that we are storing in our server.
   m_server->m_storing = true;
 
@@ -536,9 +612,12 @@ Status Storage_Module::StopStoring()
   }
 
   // Close all the storage senders.
-  for (auto sender : m_storageSenders) {
+  for (auto &sender : m_storageSenders) {
     sender.reset();
   }
+
+  // We are not storing.
+  m_writingToID = 0;
 
   // Set the flag that we are not storing in our server.
   m_server->m_storing = false;
@@ -694,8 +773,10 @@ struct WriteBufferInfo {
 /// @brief Helper function to run as a thread that writes data to disk.
 static void WriteBuffersToFile(asdp::SpinFreeQueue<WriteBufferInfo>& writeQueue, std::atomic<bool>& stop)
 {
-  WriteBufferInfo info;
   while (!stop) {
+    // We need this to be destroyed every time through the loop so we release its shared pointer,
+    // which will ause the SenderFile to be deleted if it is the last reference to it.
+    WriteBufferInfo info;
     if (writeQueue.dequeue(info, std::chrono::milliseconds(100))) {
       info.sender->Send(info.buffer->data(), info.bytesToWrite);
     }
@@ -763,25 +844,27 @@ void Storage_Module::StreamReceiverThread(std::shared_ptr<ReceiverInfo> receiver
     Status status = receiver->m_receiver->ReceiveStreamPacket(1e-3, packet, bytesInBuffer, buffer);
 
     // See if we've reached the high water mark for the buffer.  If so, copy the remaining bytes
-    // past the last full disk block size into a new buffer and then write the full-block-size portion
+    // past the last full disk block into a new buffer and then write the full-block-sized portion
     // of the old buffer to disk.
     if (bytesInBuffer >= m_persistentState.DiskBlockSize()) {
       // Copy the remaining bytes into a new buffer.
       std::shared_ptr<std::vector<uint8_t>> newBuffer = bufferPool.GetBuffer();
-      uint32_t bytesToCopy = m_persistentState.DiskBlockSize() * (bytesInBuffer / m_persistentState.DiskBlockSize());
-      std::copy(buffer->data() + bytesToCopy, buffer->data() + bytesInBuffer, newBuffer->data());
-      bytesInBuffer -= bytesToCopy;
+      uint32_t fullBlocks = m_persistentState.DiskBlockSize() * (bytesInBuffer / m_persistentState.DiskBlockSize());
+      if (fullBlocks < bytesInBuffer) {
+        std::copy(buffer->data() + fullBlocks + 1, buffer->data() + bytesInBuffer, newBuffer->data());
+      }
+      bytesInBuffer -= fullBlocks;
 
-      // Write the full block size to disk, if we have an actual sender.
+      // Write the full blocks to disk, if we have an actual sender.
       if (currentSender != nullptr) {
         WriteBufferInfo info;
         info.sender = currentSender;
         info.buffer = buffer;
-        info.bytesToWrite = bytesToCopy;
+        info.bytesToWrite = fullBlocks;
         writeQueue.enqueue(info);
       }
 
-      // Swap the new buffer into the old buffer.
+      // Make the new buffer the current buffer.
       buffer = newBuffer;
     }
   }
@@ -798,7 +881,7 @@ void Storage_Module::StreamReceiverThread(std::shared_ptr<ReceiverInfo> receiver
 
     // Write
     WriteBufferInfo info;
-    info.sender = m_storageSenders[receiver->m_ID];
+    info.sender = currentSender;
     info.buffer = buffer;
     info.bytesToWrite = bytesInBuffer;
     writeQueue.enqueue(info);
