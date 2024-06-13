@@ -20,10 +20,18 @@ Storage_Module_Server::Storage_Module_Server(Storage_Module* parent, uint32_t se
     uint16_t sendPort, uint16_t listenPort, uint32_t maxPayloadSize, int verbosity)
   : CoreServerBase(serialNumber, NicName, sendPort, listenPort, maxPayloadSize, verbosity)
   , m_parent(parent)
+  , m_replayPaused(false)
 {
   // Set our state to match the parent's state where appropriate.
   m_recordOnReset = m_parent->m_persistentState.StoringAtRestart();
   m_storing = m_parent->m_writingToID > 0;
+  /// @todo
+
+  // Set things that depend on us being the server for the client stream.
+  if (m_serial == m_parent->m_serial) {
+    // We start out in "live" mode. This changes when replay is started and stopped.
+    m_camerasStreaming = true;
+  }
 
   // Add the storage API to our features.
   m_features.push_back(STORAGE_API_AVAILABLE);
@@ -39,6 +47,17 @@ void Storage_Module_Server::doEveryLoop()
     m_error = "Server is stopping";
   }
 
+  // Once per second, check and fill in the disk-space information in our state.
+  static std::chrono::steady_clock::time_point lastCheck;
+  auto now = std::chrono::steady_clock::now();
+  if (now - lastCheck > std::chrono::seconds(1)) {
+    std::filesystem::space_info info = std::filesystem::space(m_parent->m_storageRoot);
+    m_remainingDiskSpace = info.available;
+    m_totalDiskSpace = info.capacity;
+    lastCheck = now;
+  }
+
+  // If we are replaying, check for and handle incoming data.
   /// @todo
 }
 
@@ -226,6 +245,163 @@ void Storage_Module_Server::doEraseStoredStream(const CommandPacketEraseStoredSt
   }
 }
 
+void Storage_Module_Server::doStartReplay(const CommandPacketStartReplay& command, ClientState& client)
+{
+  // Parse the command packet to get the stream ID to replay and time offset.
+  uint32_t streamID;
+  Status status = command.GetID(streamID);
+  if (status != OKAY) {
+    m_error = "doStartReplay(): " + ErrorMessage(status);
+    return;
+  }
+  status = command.GetInitialTime(m_replayInitialTime);
+  if (status != OKAY) {
+    m_error = "doStartReplay(): " + ErrorMessage(status);
+    return;
+  }
+
+  // Open the main stream file for the stream ID and read the first message from it, storing its time that we
+  // will use to offset message times.  Then continue to read messages until we get a status message and use it
+  // to set the initial state of the server.
+  m_replayFiles.resize(1);
+  std::string fileName = m_parent->m_storageRoot + "/" + std::to_string(m_serial) + "/" + std::to_string(streamID) + "/stream0.dat";
+  m_replayFiles[0] = std::make_shared<ReceiverFile>(fileName);
+  if (m_replayFiles[0]->GetConstructorStatus() != OKAY) {
+    if (m_verbosity >= 0) {
+      std::cerr << "Storage_Module::doStartReplay(): Cannot open " << fileName << std::endl;
+    }
+    // Ignore the error and return.  We will not be able to replay without the file.
+    m_replayFiles.clear();
+    return;
+  }
+  if (m_verbosity > 1) {
+    std::cout << " Storage_Module::Opened replay file for non-camera stream: " << fileName << std::endl;
+  }
+  bool gotFirstTime = false;
+  std::shared_ptr<MessageState> stateMessage;
+  while (!gotFirstTime || (stateMessage == nullptr)) {
+    // Get the next packet from the file.
+    std::shared_ptr<StreamPacket> packet;
+    size_t size = 0;
+    status = m_replayFiles[0]->ReceiveStreamPacket(1.0, packet, size);
+    if (status != OKAY) {
+      if (m_verbosity >= 0) {
+        std::cerr << "Storage_Module::doStartReplay(): Cannot read first message from " << fileName << std::endl;
+      }
+      // Ignore the error and return.  We will not be able to replay without the file.
+      m_replayFiles.clear();
+      return;
+    }
+
+    // Go through any messages in the packet, pulling out a state message if there is one.
+    std::shared_ptr<Message> msg;
+    status = packet->GetNextMessage(msg);
+    while (msg != nullptr) {
+      // Get the time and store it for the first message
+      if (!gotFirstTime) {
+        Time time;
+        status = msg->GetTime(time);
+        if (status != OKAY) {
+          if (m_verbosity >= 0) {
+            std::cerr << "Storage_Module::doStartReplay(): Cannot get time from packet" << std::endl;
+          }
+          // Ignore the error and return.  We will not be able to replay without the file.
+          m_replayFiles.clear();
+          return;
+        }
+        m_replayFirstTime = time;
+        gotFirstTime = true;
+      }
+
+      // Check to see if we have a state message.
+      MessageID msgID;
+      status = msg->GetType(msgID);
+      if (status != OKAY) {
+        if (m_verbosity >= 0) {
+          std::cerr << "Storage_Module::doStartReplay(): Cannot get message type from packet" << std::endl;
+        }
+        // Ignore the error and return.  We will not be able to replay without the file.
+        m_replayFiles.clear();
+        return;
+      }
+      if (msgID == STATE) {
+        stateMessage = std::make_shared<MessageState>(*msg);
+        if (stateMessage->GetConstructorStatus() != OKAY) {
+          if (m_verbosity >= 0) {
+            std::cerr << "Storage_Module::doStartReplay(): Cannot construct state message" << std::endl;
+          }
+          // Ignore the error and return.  We will not be able to replay without the file.
+          m_replayFiles.clear();
+          return;
+        }
+      }
+      status = packet->GetNextMessage(msg);
+      if (status != OKAY) {
+        if (m_verbosity >= 0) {
+          std::cerr << "Storage_Module::doStartReplay(): Cannot get next message from packet" << std::endl;
+        }
+        // Ignore the error and return.  We will not be able to replay without the file.
+        m_replayFiles.clear();
+        return;
+      }
+    }
+  }
+  if (m_verbosity > 3) {
+    std::cout << "   Initial time from replay file: " << m_replayFirstTime.seconds << ":" << m_replayFirstTime.microseconds << std::endl;
+  }
+
+  // Restart the main stream file so that all packets will be read from it and passed on.
+  m_replayFiles[0] = std::make_shared<ReceiverFile>(fileName);
+
+  // Find out how many cameras we have from the state message.
+  std::vector<CameraInfo> cameras;
+  status = stateMessage->GetCameras(cameras);
+  if (status != OKAY) {
+    if (m_verbosity >= 0) {
+      std::cerr << "Storage_Module::doStartReplay(): Cannot get cameras from state message" << std::endl;
+    }
+    // Ignore the error and return.  We will not be able to replay without the file.
+    m_replayFiles.clear();
+    return;
+  }
+  if (m_verbosity > 3) {
+    std::cout << "   Number of cameras in replay file: " << cameras.size() << std::endl;
+  }
+
+  // Open the camera stream files for the stream ID and start the stream receiver threads.
+  /// @todo
+
+  /// @todo
+
+  // Switching away from live mode and not paused.
+  m_camerasStreaming = false;
+  m_replaying = true;
+  m_replayPaused = false;
+}
+
+void Storage_Module_Server::doPauseReplay(const CommandPacketPauseReplay& command, ClientState& client)
+{
+  m_replayPaused = true;
+}
+
+void Storage_Module_Server::doStopReplay(const CommandPacketStopReplay& command, ClientState& client)
+{
+  // Stop all of our per-camera receive threads.
+  /// @todo
+
+  // Stop all of our stream receivers.
+  m_replayFiles.clear();
+
+  /// @todo
+
+  // Fill in the state values from our parent, which may differ from the ones used during replay.
+  /// @todo
+
+  // Switching back to live mode.
+  m_camerasStreaming = true;
+  m_replaying = false;
+}
+
 Storage_Module::Storage_Module(const std::string& NicNameIn, const std::string& NicNameOut,
                                const std::string StorageRoot, int verbosity)
   : CoreClient(NicNameIn)
@@ -408,7 +584,7 @@ void Storage_Module::ClientThread()
         // Drop the connection and we'll automatically try to reconnect later.
         m_stream.reset();
         m_server->m_storing = false;
-        m_server.reset();
+        m_storageSenders.clear();
         for (auto& sender : m_storageSenders) {
           sender.reset();
         }
@@ -441,9 +617,11 @@ void Storage_Module::ClientThread()
           }
         }
 
-        // If we have a server associated with this client, forward the message through it.
-        // Squash any state message and do not pass it on.
-        /// @todo
+        // When our associated server object is live, forward the message through it.
+        // Squash any state message and do not pass it on because the server will be generating its own.
+        if (m_server->m_camerasStreaming) {
+          /// @todo
+        }
 
       }
 
@@ -542,8 +720,8 @@ Status Storage_Module::StartStoring()
 {
   std::lock_guard<std::mutex> lock(m_storageMutex);
 
-  // Ensure that we are connected to a server before we start storing (we will have storage server pointers).
-  if (m_storageSenders.size() == 0) {
+  // Ensure that we are connected to a server before we start storing (and that we have storage server pointers).
+  if ((m_stream == nullptr) || (m_storageSenders.size() == 0)) {
     return OKAY;
   }
 
@@ -606,8 +784,8 @@ Status Storage_Module::StopStoring()
 {
   std::lock_guard<std::mutex> lock(m_storageMutex);
 
-  // Ensure that we are connected to a server before we start storing (we will have storage server pointers).
-  if (m_storageSenders.size() == 0) {
+  // Ensure that we are connected to a server before we start storing (and that we have storage server pointers).
+  if ((m_stream == nullptr) || (m_storageSenders.size() == 0)) {
     return OKAY;
   }
 
@@ -867,6 +1045,9 @@ void Storage_Module::StreamReceiverThread(std::shared_ptr<ReceiverInfo> receiver
       // Make the new buffer the current buffer.
       buffer = newBuffer;
     }
+
+    // If we are streaming live data, we need to send it to the client as well.
+    /// @todo
   }
 
   // Write the last partial buffer to disk if it has any data in it.  First zero-pad it to an even multiple

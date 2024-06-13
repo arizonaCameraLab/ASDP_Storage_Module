@@ -7,6 +7,7 @@
 #include <map>
 #include <mutex>
 #include <list>
+#include <atomic>
 
 namespace asdp {
 
@@ -38,6 +39,14 @@ protected:
   void doEveryLoop() override;
 
   //=============================================================================
+  // Replay-related state and methods.
+  std::atomic_bool m_replayPaused;  ///< True if we are paused, false if we are playing.
+  Time m_replayInitialTime;         ///< The time sent as part of the most-recent start-replay command.
+  Time m_replayFirstTime;           ///< The time of the first message in the replay.
+  /// The files we are replaying from.
+  std::vector< std::shared_ptr<ReceiverFile> > m_replayFiles;
+
+  //=============================================================================
   // Override methods to implement the commands as needed.
 
   /// @brief Implement the specified command.
@@ -65,13 +74,16 @@ protected:
   /// @param client The client that the command is coming from.
   void doCancelSubregion(const CommandPacketCancelSubregion&, ClientState& client) override;
 
-  /// @todo Override the other methods as needed.
+  /// Override recording and replay methods.
   void doStartRecording(const CommandPacketStartRecording& command, ClientState& client) override;
   void doStopRecording(const CommandPacketStopRecording& command, ClientState& client) override;
   void doSetStartUpRecordingState(const CommandPacketSetStartUpRecordingState& command, ClientState& client) override;
   void doListStoredStreams(const CommandPacketListStoredStreams& command, ClientState& client) override;
-  void doEraseStoredStream(const CommandPacketEraseStoredStream& command, ClientState& client);
-  void doEraseAllStoredStreams(const CommandPacketEraseAllStoredStreams& command, ClientState& client);
+  void doEraseStoredStream(const CommandPacketEraseStoredStream& command, ClientState& client) override;
+  void doEraseAllStoredStreams(const CommandPacketEraseAllStoredStreams& command, ClientState& client) override;
+  void doStartReplay(const CommandPacketStartReplay& command, ClientState& client) override;
+  void doPauseReplay(const CommandPacketPauseReplay& command, ClientState& client) override;
+  void doStopReplay(const CommandPacketStopReplay& command, ClientState& client) override;
 
   friend class Storage_Module;
 };
