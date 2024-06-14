@@ -47,18 +47,124 @@ void Storage_Module_Server::doEveryLoop()
     m_error = "Server is stopping";
   }
 
-  // Once per second, check and fill in the disk-space information in our state.
-  static std::chrono::steady_clock::time_point lastCheck;
+  // If we are replaying, check for and handle incoming data.
   auto now = std::chrono::steady_clock::now();
-  if (now - lastCheck > std::chrono::seconds(1)) {
+  if (m_replaying) {
+    // First update the time code that we should be playing through in a thread-safe way so that
+    // all of the image-streaming threads can also make use of it.
+    {
+      std::lock_guard<std::mutex> lock(m_replayMutex);
+
+      // Find out how long it has been since the last update.
+      std::chrono::duration<double> elapsed = now - m_lastUpdatedReplayTime;
+
+      // If we are not paused, update the replay time.
+      if (!m_replayPaused) {
+        m_replayCurrentTime += Time(elapsed.count());
+      }
+      m_lastUpdatedReplayTime = now;
+    }
+    m_streamReplayTime = m_replayCurrentTime - m_replayFirstTime + m_replayInitialTime;
+
+    // Now check for and handle incoming data until we run past the current time.
+    std::shared_ptr<StreamPacket> packet;
+    bool ranPastCurrentTime = false;
+    do {
+      size_t offset = 0;
+      Status status = m_replayFiles[0]->ReceiveStreamPacket(0, packet, offset);
+      if (status != TIMEOUT) {
+        if (status != OKAY) {
+          m_error = "doEveryLoop(): Error reading replay file: " + ErrorMessage(status);
+          return;
+        }
+
+        if (packet == nullptr) {
+          // We have reached the end of the file, so record this.
+          m_replayAtEnd = true;
+          break;
+        }
+
+        // Go through all the messages in the packet, adjust time, and send them to the clients if appropriate.
+        std::shared_ptr<Message> msg;
+        status = packet->GetNextMessage(msg);
+        while (msg != nullptr) {
+          // Find out the time of the message and see whether we've run past the current time.
+          Time time;
+          status = msg->GetTime(time);
+          if (status != OKAY) {
+            m_error = "doEveryLoop(): Error getting time from message: " + ErrorMessage(status);
+            return;
+          }
+          if (time > m_replayCurrentTime) {
+            ranPastCurrentTime = true;
+          }
+
+          // Get the message ID so we can know if we need to squeltch it.
+          MessageID msgID;
+          status = msg->GetType(msgID);
+          if (status != OKAY) {
+            m_error = "doEveryLoop(): Error getting message type: " + ErrorMessage(status);
+            return;
+          }
+
+          // Adjust the time of the message to match the current replay time.
+          time -= m_replayFirstTime;
+          time += m_replayCurrentTime;
+
+          for (auto& client : m_clients) {
+
+            // Determine that we want to squelch because they are state messages or types we're not sending.
+            std::vector<MessageID> squelchTypes = { STATE };
+            if (!client.m_streamingPoses) {
+              squelchTypes.push_back(POSE);
+            }
+            if (!client.m_streamingTemperatures) {
+              squelchTypes.push_back(TEMPERATURE);
+            }
+
+            // If we don't want to squelch this message, then add it to the packet.
+            if (std::find(squelchTypes.begin(), squelchTypes.end(), msgID) != squelchTypes.end()) {
+              std::shared_ptr<StreamPacket> clientPacket;
+              status = client.m_writer->GetCurrentPacket(clientPacket);
+              if (status != OKAY) {
+                m_error = "doEveryLoop(): Error getting current packet: " + ErrorMessage(status);
+                return;
+              }
+              status = msg->CopyToStreamPacket(*clientPacket, time);
+              if (status != OKAY) {
+                m_error = "doEveryLoop(): Error adding message to packet: " + ErrorMessage(status);
+                return;
+              }
+            }
+          }
+
+          // Get the next message in the packet.
+          status = packet->GetNextMessage(msg);
+          if (status != OKAY) {
+            m_error = "doEveryLoop(): Error getting next message: " + ErrorMessage(status);
+            return;
+          }
+        }
+      }
+    } while (!ranPastCurrentTime);
+
+    // Flush all messages to the clients.
+    for (auto& client : m_clients) {
+      Status status = client.m_writer->Flush();
+      if (status != OKAY) {
+        m_error = "doEveryLoop(): Error flushing StreamWriter: " + ErrorMessage(status);
+        return;
+      }
+    }
+  }
+
+  // Once per second, check and fill in the disk-space information in our state.
+  if (now - m_lastCheckDiskSpace > std::chrono::seconds(1)) {
     std::filesystem::space_info info = std::filesystem::space(m_parent->m_storageRoot);
     m_remainingDiskSpace = info.available;
     m_totalDiskSpace = info.capacity;
-    lastCheck = now;
+    m_lastCheckDiskSpace = now;
   }
-
-  // If we are replaying, check for and handle incoming data.
-  /// @todo
 }
 
 void Storage_Module_Server::doReset(const CommandPacketReset& command, ClientState& client)
@@ -247,6 +353,8 @@ void Storage_Module_Server::doEraseStoredStream(const CommandPacketEraseStoredSt
 
 void Storage_Module_Server::doStartReplay(const CommandPacketStartReplay& command, ClientState& client)
 {
+  std::lock_guard<std::mutex> lock(m_replayMutex);
+
   // Parse the command packet to get the stream ID to replay and time offset.
   uint32_t streamID;
   Status status = command.GetID(streamID);
@@ -349,6 +457,10 @@ void Storage_Module_Server::doStartReplay(const CommandPacketStartReplay& comman
   if (m_verbosity > 3) {
     std::cout << "   Initial time from replay file: " << m_replayFirstTime.seconds << ":" << m_replayFirstTime.microseconds << std::endl;
   }
+  
+  // Start replay at the beginning of the file, with offset based on the current steady-clock value.
+  m_replayCurrentTime = m_replayFirstTime;
+  m_lastUpdatedReplayTime = std::chrono::steady_clock::now();
 
   // Restart the main stream file so that all packets will be read from it and passed on.
   m_replayFiles[0] = std::make_shared<ReceiverFile>(fileName);
@@ -374,6 +486,8 @@ void Storage_Module_Server::doStartReplay(const CommandPacketStartReplay& comman
   /// @todo
 
   // Switching away from live mode and not paused.
+  m_replayAtEnd = false;
+  m_streamReplayTime = m_replayCurrentTime - m_replayFirstTime + m_replayInitialTime;
   m_camerasStreaming = false;
   m_replaying = true;
   m_replayPaused = false;
@@ -384,8 +498,15 @@ void Storage_Module_Server::doPauseReplay(const CommandPacketPauseReplay& comman
   m_replayPaused = true;
 }
 
+void Storage_Module_Server::doResumeReplay(const CommandPacketResumeReplay& command, ClientState& client)
+{
+  m_replayPaused = false;
+}
+
 void Storage_Module_Server::doStopReplay(const CommandPacketStopReplay& command, ClientState& client)
 {
+  std::lock_guard<std::mutex> lock(m_replayMutex);
+
   // Stop all of our per-camera receive threads.
   /// @todo
 
@@ -619,6 +740,7 @@ void Storage_Module::ClientThread()
 
         // When our associated server object is live, forward the message through it.
         // Squash any state message and do not pass it on because the server will be generating its own.
+        // Don't foward pose or temperature messages if we were not asked to.
         if (m_server->m_camerasStreaming) {
           /// @todo
         }

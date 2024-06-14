@@ -37,41 +37,26 @@ protected:
 
   /// @brief Handle operations that must be done every loop, like checking if our thread should stop.
   void doEveryLoop() override;
+  std::chrono::steady_clock::time_point m_lastCheckDiskSpace;
 
   //=============================================================================
   // Replay-related state and methods.
   std::atomic_bool m_replayPaused;  ///< True if we are paused, false if we are playing.
   Time m_replayInitialTime;         ///< The time sent as part of the most-recent start-replay command.
   Time m_replayFirstTime;           ///< The time of the first message in the replay.
-  /// The files we are replaying from.
+  Time m_replayCurrentTime;         ///< The time through which we should replay all messages.
+  std::chrono::steady_clock::time_point m_lastUpdatedReplayTime; ///< When we last updated the replay time.
+  /// The files we are replaying from. The 0th is the main stream and the rest are image streams.
   std::vector< std::shared_ptr<ReceiverFile> > m_replayFiles;
+  std::mutex m_replayMutex;         ///< Mutex to protect the replay state.
 
   //=============================================================================
-  // Override methods to implement the commands as needed.
+  /// Override methods to implement the commands as needed.
 
-  /// @brief Implement the specified command.
-  /// @param command The command packet to implement.
-  /// @param client The client that the command is coming from.
   void doReset(const CommandPacketReset&, ClientState& client) override;
-
-  /// @brief Implement the specified command.
-  /// @param command The command packet to implement.
-  /// @param client The client that the command is coming from.
   void doConfigureTrigger(const CommandPacketConfigureTrigger&, ClientState& client) override;
-
-  /// @brief Implement the specified command.
-  /// @param command The command packet to implement.
-  /// @param client The client that the command is coming from.
   void doSoftwareTrigger(const CommandPacketSoftwareTrigger&, ClientState& client) override;
-
-  /// @brief Implement the specified command.
-  /// @param command The command packet to implement.
-  /// @param client The client that the command is coming from.
   void doStreamSubregion(const CommandPacketStreamSubregion&, ClientState& client) override;
-
-  /// @brief Implement the specified command.
-  /// @param command The command packet to implement.
-  /// @param client The client that the command is coming from.
   void doCancelSubregion(const CommandPacketCancelSubregion&, ClientState& client) override;
 
   /// Override recording and replay methods.
@@ -83,6 +68,7 @@ protected:
   void doEraseAllStoredStreams(const CommandPacketEraseAllStoredStreams& command, ClientState& client) override;
   void doStartReplay(const CommandPacketStartReplay& command, ClientState& client) override;
   void doPauseReplay(const CommandPacketPauseReplay& command, ClientState& client) override;
+  void doResumeReplay(const CommandPacketResumeReplay& command, ClientState& client) override;
   void doStopReplay(const CommandPacketStopReplay& command, ClientState& client) override;
 
   friend class Storage_Module;
@@ -156,6 +142,7 @@ protected:
     bool StoringAtRestart() const { return m_storingAtRestart; }
 
     /// @brief Set whether we are storing to disk at restart.
+    /// @param storingAtRestart True if we are storing to disk at restart.
     void SetStoringAtRestart(bool storingAtRestart) { m_storingAtRestart = storingAtRestart; }
 
     /// @brief Get the number of bytes in a disk block.
