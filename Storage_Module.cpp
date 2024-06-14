@@ -616,9 +616,17 @@ Storage_Module::~Storage_Module()
       thread.join();
     }
   }
+  m_server_threads.clear();
   if (m_client_thread.joinable()) {
     m_client_thread.join();
   }
+
+  for (auto& thread : m_receiver_threads) {
+    if (thread.joinable()) {
+      thread.join();
+    }
+  }
+  m_receiver_threads.clear();
 
   if (m_verbosity > 0) {
     std::cout << "Storage_Module::~Storage_Module() destroyed" << std::endl;
@@ -1081,6 +1089,12 @@ static void WriteBuffersToFile(asdp::SpinFreeQueue<WriteBufferInfo>& writeQueue,
       info.sender->Send(info.buffer->data(), info.bytesToWrite);
     }
   }
+
+  // Drain the queue before we exit.
+  while (writeQueue.size()) {
+    WriteBufferInfo info;
+    writeQueue.dequeue(info, std::chrono::milliseconds(100));
+  }
 }
 
 void Storage_Module::StreamReceiverThread(std::shared_ptr<ReceiverInfo> receiver)
@@ -1191,7 +1205,7 @@ void Storage_Module::StreamReceiverThread(std::shared_ptr<ReceiverInfo> receiver
   }
 
   // Wait for our queue to drain, then stop our sub-thread and wait for it to finish.
-  while (!writeQueue.size()) {
+  while (writeQueue.size() != 0) {
     std::this_thread::sleep_for(std::chrono::milliseconds(10));
   }
   stop = true;
