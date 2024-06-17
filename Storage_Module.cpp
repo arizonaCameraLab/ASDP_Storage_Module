@@ -65,6 +65,7 @@ void Storage_Module_Server::doEveryLoop()
       m_lastUpdatedReplayTime = now;
     }
     m_streamReplayTime = m_replayCurrentTime - m_replayFirstTime + m_replayInitialTime;
+    //std::cout << "XXX Current time " << m_replayCurrentTime.seconds << ":" << m_replayCurrentTime.microseconds << std::endl;
 
     // Now check for and handle incoming data until we run past the current time.
     std::shared_ptr<StreamPacket> packet;
@@ -72,7 +73,9 @@ void Storage_Module_Server::doEveryLoop()
     do {
       size_t offset = 0;
       Status status = m_replayFiles[0]->ReceiveStreamPacket(0, packet, offset);
-      if (status != TIMEOUT) {
+      if (status == TIMEOUT) {
+        break;
+      } else {
         if (status != OKAY) {
           m_error = "doEveryLoop(): Error reading replay file: " + ErrorMessage(status);
           return;
@@ -83,6 +86,7 @@ void Storage_Module_Server::doEveryLoop()
           m_replayAtEnd = true;
           break;
         }
+        //std::cout << "XXX got packet" << std::endl;
 
         // Go through all the messages in the packet, adjust time, and send them to the clients if appropriate.
         std::shared_ptr<Message> msg;
@@ -106,6 +110,7 @@ void Storage_Module_Server::doEveryLoop()
             m_error = "doEveryLoop(): Error getting message type: " + ErrorMessage(status);
             return;
           }
+          //std::cout << "XXX " << time.seconds << ":" << time.microseconds << ", message type " << msgID << std::endl;
 
           // Adjust the time of the message to match the current replay time.
           time -= m_replayFirstTime;
@@ -146,14 +151,16 @@ void Storage_Module_Server::doEveryLoop()
           }
         }
       }
-    } while (!ranPastCurrentTime);
+    } while (!ranPastCurrentTime && !m_replayAtEnd);
 
-    // Flush all messages to the clients.
+    // Flush all messages to the clients.  This may fail because of a closed client.
     for (auto& client : m_clients) {
       Status status = client.m_writer->Flush();
       if (status != OKAY) {
-        m_error = "doEveryLoop(): Error flushing StreamWriter: " + ErrorMessage(status);
-        return;
+        if (m_verbosity >= 0) {
+          std::cerr << "Storage_Module_Server::doEveryLoop(): Error flushing StreamWriter: " << ErrorMessage(status) << std::endl;
+          std::cerr << "  (Client may have disconnected)" << std::endl;
+        }
       }
     }
   }
@@ -708,9 +715,9 @@ void Storage_Module::ClientThread()
         if (m_verbosity > 1) {
           std::cout << " Storage_Module::Disconnected from server with serial# " << m_serial << std::endl;
         }
-        std::lock_guard<std::mutex> lock(m_storageMutex);
 
         // Drop the connection and we'll automatically try to reconnect later.
+        std::lock_guard<std::mutex> lock(m_storageMutex);
         m_stream.reset();
         m_server->m_storing = false;
         m_storageSenders.clear();

@@ -91,5 +91,5 @@ int main(int argc, char** argv)
     std::cerr << "Module failed: " << ErrorMessage(sModule.GetCurrentStatus()) << std::endl;
   }
 
-  return 0;
+  return 4;
 }
