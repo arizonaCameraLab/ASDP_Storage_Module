@@ -39,6 +39,9 @@ protected:
   void doEveryLoop() override;
   std::chrono::steady_clock::time_point m_lastCheckDiskSpace;
 
+  /// @brief Handle a client being closed.
+  void clientBeingRemoved(ClientState& client) override;
+
   //=============================================================================
   // Replay-related state and methods.
   std::atomic_bool m_replayPaused;  ///< True if we are paused, false if we are playing.

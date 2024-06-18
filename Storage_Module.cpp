@@ -39,6 +39,11 @@ Storage_Module_Server::Storage_Module_Server(Storage_Module* parent, uint32_t se
   /// @todo
 }
 
+void Storage_Module_Server::clientBeingRemoved(ClientState& client)
+{
+  doStopReplay(CommandPacketStopReplay(), client);
+}
+
 void Storage_Module_Server::doEveryLoop()
 {
   // If the threads are supposed to be stopping, set an error indicating
@@ -65,7 +70,6 @@ void Storage_Module_Server::doEveryLoop()
       m_lastUpdatedReplayTime = now;
     }
     m_streamReplayTime = m_replayCurrentTime - m_replayFirstTime + m_replayInitialTime;
-    //std::cout << "XXX Current time " << m_replayCurrentTime.seconds << ":" << m_replayCurrentTime.microseconds << std::endl;
 
     // Now check for and handle incoming data until we run past the current time.
     std::shared_ptr<StreamPacket> packet;
