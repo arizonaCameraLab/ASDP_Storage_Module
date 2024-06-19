@@ -3,6 +3,7 @@
  */
 
 #pragma once
+#include "Elapsed_Time_With_Pause.h"
 #include <ASDP_Core_API.h>
 #include <map>
 #include <mutex>
@@ -42,16 +43,23 @@ protected:
   /// @brief Handle a client being closed.
   void clientBeingRemoved(ClientState& client) override;
 
+  /// @brief Configure our internal state based on the specified state message.
+  /// @param state The state message to configure our internal state based on.
+  Status configureState(const MessageState &state);
+
   //=============================================================================
   // Replay-related state and methods.
   std::atomic_bool m_replayPaused;  ///< True if we are paused, false if we are playing.
   Time m_replayInitialTime;         ///< The time sent as part of the most-recent start-replay command.
-  Time m_replayFirstTime;           ///< The time of the first message in the replay.
-  Time m_replayCurrentTime;         ///< The time through which we should replay all messages.
-  std::chrono::steady_clock::time_point m_lastUpdatedReplayTime; ///< When we last updated the replay time.
+  Time m_replayFirstTime;           ///< The time of the first message in the replay file.
+  asdp::Elapsed_Time_With_Pause m_replayElapsedTime;  ///< The elapsed time of the replay.
   /// The files we are replaying from. The 0th is the main stream and the rest are image streams.
   std::vector< std::shared_ptr<ReceiverFile> > m_replayFiles;
   std::mutex m_replayMutex;         ///< Mutex to protect the replay state.
+  /// The next packet we are currently waiting to replay, which may be in the future. We use this
+  /// to look ahead one packet to see if we should pause.
+  std::shared_ptr<StreamPacket> m_replayPacket;
+  Time m_replayPacketTime;          ///< The time of the next packet we are currently waiting to replay.
 
   //=============================================================================
   /// Override methods to implement the commands as needed.
