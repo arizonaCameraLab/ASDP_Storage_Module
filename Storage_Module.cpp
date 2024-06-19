@@ -132,6 +132,7 @@ void Storage_Module_Server::doEveryLoop()
         time -= m_replayFirstTime;
         time += m_replayInitialTime;
 
+        /// @todo Consider making this code common between replay and passthrough.
         for (auto& client : m_clients) {
 
           // Determine that we want to squelch because they are state messages or events.
@@ -142,7 +143,6 @@ void Storage_Module_Server::doEveryLoop()
           if (!client.m_streamingTemperatures) {
             squelchTypes.push_back(TEMPERATURE);
           }
-          std::cout << "XXX Num types: " << squelchTypes.size() << std::endl;
 
           // If we don't want to squelch this message, then add it to the packet.
           if (std::find(squelchTypes.begin(), squelchTypes.end(), msgID) == squelchTypes.end()) {
@@ -382,6 +382,12 @@ void Storage_Module_Server::doEraseStoredStream(const CommandPacketEraseStoredSt
 
 void Storage_Module_Server::doStartReplay(const CommandPacketStartReplay& command, ClientState& client)
 {
+  // If we're already replaying, then stop replaying first.  Do this before we grab the mutex because
+  // the other command will grab it.
+  if (m_replaying) {
+    doStopReplay(CommandPacketStopReplay(), client);
+  }
+
   std::lock_guard<std::mutex> lock(m_replayMutex);
 
   // Parse the command packet to get the stream ID to replay and time offset.
@@ -529,6 +535,74 @@ void Storage_Module_Server::doStartReplay(const CommandPacketStartReplay& comman
   m_replayPacket.reset();
   m_replaying = true;
   m_replayPaused = false;
+
+  // Switch the clock base to the initial time of the replay.  We do this by subtracting the current
+  // local time and adding the requested offset, producing two times for "now", one in the live
+  // time base and one in the replay time base.
+  std::chrono::steady_clock::time_point now = std::chrono::steady_clock::now();
+  Time nowTimeStruct = {
+    (uint32_t)std::chrono::duration_cast<std::chrono::microseconds>(now.time_since_epoch()).count() / 1000000,
+    (uint32_t)std::chrono::duration_cast<std::chrono::microseconds>(now.time_since_epoch()).count() % 1000000
+  };
+  Time nowInLive;
+  status = m_timer->GetCoreTime(nowInLive);
+  if (status != OKAY) {
+    m_error = "Storage_Module::doStartReplay(): Error getting time: " + ErrorMessage(status);
+    return;
+  }
+  status = m_timer->SetCoreNegativeOffset(nowTimeStruct);
+  if (status != OKAY) {
+    m_error = "Storage_Module::doStartReplay(): Error setting negative time offset: " + ErrorMessage(status);
+    return;
+  }
+  status = m_timer->SetCorePositiveOffset(m_replayInitialTime);
+  if (status != OKAY) {
+    m_error = "Storage_Module::doStartReplay(): Error setting positive time offset: " + ErrorMessage(status);
+    return;
+  }
+
+  // Inform the client that we are replaying by sending an START_OF_REPLAY message
+  // followed by a clock-sync message.  Use the old time code for the first and the new for
+  // the second.
+  for (auto& client : m_clients) {
+    // Adjust the last-sent message times so that we don't miss a beat with repeating sends.
+    client.m_lastStateSent += m_replayInitialTime;
+    client.m_lastStateSent -= nowInLive;
+    client.m_lastClockSent += m_replayInitialTime;
+    client.m_lastClockSent -= nowInLive;
+
+    std::shared_ptr<StreamPacket> packet;
+    status = client.m_writer->GetCurrentPacket(packet);
+    if (status != OKAY) {
+      m_error = "Storage_Module::doStartReplay(): Error getting current packet: " + ErrorMessage(status);
+      return;
+    }
+
+    // The start-of-replay message is sent with the current time code.
+    MessageEvent message(*packet, nowInLive, 0, START_OF_REPLAY,
+      std::to_string(streamID));
+    if (message.GetConstructorStatus() != OKAY) {
+      m_error = "Storage_Module::doStartReplay(): Error constructing MessageReplayStopped: " + ErrorMessage(message.GetConstructorStatus());
+      return;
+    }
+
+    // The clock-sync message is sent with the replay time code.
+    MessageEvent message2(*packet, m_replayInitialTime, 0, CLOCK_SYNC, "");
+    if (message2.GetConstructorStatus() != OKAY) {
+      m_error = "Storage_Module::doStartReplay(): Error constructing MessageClockSync: " + ErrorMessage(message2.GetConstructorStatus());
+      return;
+    }
+
+    // Send the packet.
+    status = client.m_writer->Flush();
+    if (status != OKAY) {
+      // Client may have disconnected.
+      if (m_verbosity >= 0) {
+        std::cerr << "Storage_Module::doStartReplay(): Error flushing StreamWriter: " << ErrorMessage(status) << std::endl;
+      }
+      return;
+    }
+  }
 }
 
 void Storage_Module_Server::doPauseReplay(const CommandPacketPauseReplay& command, ClientState& client)
@@ -547,6 +621,11 @@ void Storage_Module_Server::doStopReplay(const CommandPacketStopReplay& command,
 {
   std::lock_guard<std::mutex> lock(m_replayMutex);
 
+  // Do nothing if we're not replaying.
+  if (!m_replaying) {
+    return;
+  }
+
   // Stop all of our per-camera receive threads.
   /// @todo
 
@@ -555,13 +634,78 @@ void Storage_Module_Server::doStopReplay(const CommandPacketStopReplay& command,
 
   /// @todo
 
-  // Fill in the state values from our parent, which may differ from the ones used during replay.
+  // Adjust our state values, which may differ from the ones used during replay.
   /// @todo
 
   // Switching back to live mode.
   m_camerasStreaming = true;
   m_replayPacket.reset();
   m_replaying = false;
+
+  // Switch the clock base from the initial time of the replay back to zero-offset relative to
+  // the local clock.
+  Time nowInReplay;
+  Status status = m_timer->GetCoreTime(nowInReplay);
+  if (status != OKAY) {
+    m_error = "Storage_Module::doStopReplay(): Error getting replay time: " + ErrorMessage(status);
+    return;
+  }
+  status = m_timer->SetCoreNegativeOffset(Time(0,0));
+  if (status != OKAY) {
+    m_error = "Storage_Module::doStopReplay(): Error setting negative time offset: " + ErrorMessage(status);
+    return;
+  }
+  status = m_timer->SetCorePositiveOffset(Time(0,0));
+  if (status != OKAY) {
+    m_error = "Storage_Module::doStopReplay(): Error setting positive time offset: " + ErrorMessage(status);
+    return;
+  }
+  Time nowInLive;
+  status = m_timer->GetCoreTime(nowInLive);
+  if (status != OKAY) {
+    m_error = "Storage_Module::doStopReplay(): Error getting live time: " + ErrorMessage(status);
+    return;
+  }
+
+  // Inform the client that we are no longer replaying by sending an END_OF_REPLAY message
+  // in replay time followed by a clock-sync message in our local time code.
+  for (auto& client : m_clients) {
+    // Adjust the last-sent message times so that we don't miss a beat with repeating sends.
+    client.m_lastStateSent += nowInLive;
+    client.m_lastStateSent -= m_replayInitialTime;
+    client.m_lastClockSent += nowInLive;
+    client.m_lastClockSent -= m_replayInitialTime;
+
+    std::shared_ptr<StreamPacket> packet;
+    status = client.m_writer->GetCurrentPacket(packet);
+    if (status != OKAY) {
+      m_error = "Storage_Module:doStopReplay(): Error getting current packet: " + ErrorMessage(status);
+      return;
+    }
+
+    MessageEvent message(*packet, nowInReplay, 0, END_OF_REPLAY, "");
+    if (message.GetConstructorStatus() != OKAY) {
+      m_error = "Storage_Module:doStopReplay(): Error constructing MessageReplayStopped: " + ErrorMessage(message.GetConstructorStatus());
+      return;
+    }
+
+    // The clock-sync message is sent with the live time code.
+    MessageEvent message2(*packet, nowInLive, 0, CLOCK_SYNC, "");
+    if (message2.GetConstructorStatus() != OKAY) {
+      m_error = "Storage_Module:doStopReplay(): Error constructing MessageClockSync: " + ErrorMessage(message2.GetConstructorStatus());
+      return;
+    }
+
+    // Send the packet.
+    status = client.m_writer->Flush();
+    if (status != OKAY) {
+      // Client may have disconnected.
+      if (m_verbosity >= 0) {
+        std::cerr << "Storage_Module::doStopReplay(): Error flushing StreamWriter: " << ErrorMessage(status) << std::endl;
+      }
+      return;
+    }
+  }
 }
 
 Storage_Module::Storage_Module(const std::string& NicNameIn, const std::string& NicNameOut,
@@ -791,6 +935,7 @@ void Storage_Module::ClientThread()
         // Squash any state message and do not pass it on because the server will be generating its own.
         // Don't foward pose or temperature messages if we were not asked to.
         if (m_server->m_camerasStreaming) {
+          /// @todo Consider making a common method for this code and the replay code.
           /// @todo
         }
 
@@ -1122,7 +1267,7 @@ Status Storage_Module::ConfigureClientConnection(const MessageState& response)
 struct WriteBufferInfo {
   std::shared_ptr<SenderFile> sender;
   std::shared_ptr<std::vector<uint8_t>> buffer;
-  size_t bytesToWrite;
+  size_t bytesToWrite = 0;
 };
 
 /// @brief Helper function to run as a thread that writes data to disk.
