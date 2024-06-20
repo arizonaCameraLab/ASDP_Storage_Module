@@ -129,8 +129,8 @@ void Storage_Module_Server::doEveryLoop()
         }
 
         // Adjust the time of the message to match the current time base.
-        time -= m_replayFirstTime;
         time += m_replayInitialTime;
+        time -= m_replayFirstTime;
 
         /// @todo Consider making this code common between replay and passthrough.
         for (auto& client : m_clients) {
@@ -299,14 +299,18 @@ void Storage_Module_Server::doListStoredStreams(const CommandPacketListStoredStr
 
     MessageStoredStreamList message(*packet, timeCode, storedStreamIDs);
     if (message.GetConstructorStatus() != OKAY) {
-      m_error = "doListStoredStreams(): Error constructing MessageStoredStreamList: " + ErrorMessage(message.GetConstructorStatus());
+      m_error = "doListStoredStreams(): Error constructing MessageStoredStreamList: "
+        + ErrorMessage(message.GetConstructorStatus())
+        + " (client may have disconnected)";
       return;
     }
 
     // Send the packet.
     status = client.m_writer->Flush();
     if (status != OKAY) {
-      m_error = "doListStoredStreams(): Error flushing StreamWriter: " + ErrorMessage(status);
+      m_error = "doListStoredStreams(): Error flushing StreamWriter: "
+        + ErrorMessage(status)
+        + " (client may have disconnected)";
       return;
     }
   }
@@ -504,6 +508,7 @@ void Storage_Module_Server::doStartReplay(const CommandPacketStartReplay& comman
   }
   
   // Restart the main stream file so that all packets will be read from it and passed on.
+  m_replayFiles[0].reset();
   m_replayFiles[0] = std::make_shared<ReceiverFile>(fileName);
 
   // Find out how many cameras we have from the state message.
@@ -565,11 +570,9 @@ void Storage_Module_Server::doStartReplay(const CommandPacketStartReplay& comman
   // followed by a clock-sync message.  Use the old time code for the first and the new for
   // the second.
   for (auto& client : m_clients) {
-    // Adjust the last-sent message times so that we don't miss a beat with repeating sends.
-    client.m_lastStateSent += m_replayInitialTime;
-    client.m_lastStateSent -= nowInLive;
-    client.m_lastClockSent += m_replayInitialTime;
-    client.m_lastClockSent -= nowInLive;
+    // Clear the last-sent message times so that we send a new message stream starting now.
+    client.m_lastStateSent = { 0, 0 };
+    client.m_lastClockSent = { 0, 0 };
 
     std::shared_ptr<StreamPacket> packet;
     status = client.m_writer->GetCurrentPacket(packet);
@@ -599,6 +602,7 @@ void Storage_Module_Server::doStartReplay(const CommandPacketStartReplay& comman
       // Client may have disconnected.
       if (m_verbosity >= 0) {
         std::cerr << "Storage_Module::doStartReplay(): Error flushing StreamWriter: " << ErrorMessage(status) << std::endl;
+        std::cerr << "  (Client may have disconnected)" << std::endl;
       }
       return;
     }
@@ -607,12 +611,22 @@ void Storage_Module_Server::doStartReplay(const CommandPacketStartReplay& comman
 
 void Storage_Module_Server::doPauseReplay(const CommandPacketPauseReplay& command, ClientState& client)
 {
+  // Do nothing if we're not replaying.
+  if (!m_replaying) {
+    return;
+  }
+
   m_replayElapsedTime.pause();
   m_replayPaused = true;
 }
 
 void Storage_Module_Server::doResumeReplay(const CommandPacketResumeReplay& command, ClientState& client)
 {
+  // Do nothing if we're not replaying.
+  if (!m_replaying) {
+    return;
+  }
+
   m_replayElapsedTime.resume();
   m_replayPaused = false;
 }
@@ -670,11 +684,9 @@ void Storage_Module_Server::doStopReplay(const CommandPacketStopReplay& command,
   // Inform the client that we are no longer replaying by sending an END_OF_REPLAY message
   // in replay time followed by a clock-sync message in our local time code.
   for (auto& client : m_clients) {
-    // Adjust the last-sent message times so that we don't miss a beat with repeating sends.
-    client.m_lastStateSent += nowInLive;
-    client.m_lastStateSent -= m_replayInitialTime;
-    client.m_lastClockSent += nowInLive;
-    client.m_lastClockSent -= m_replayInitialTime;
+    // Clear the last-sent message times so that we send a new message stream starting now.
+    client.m_lastStateSent = { 0, 0 };
+    client.m_lastClockSent = { 0, 0 };
 
     std::shared_ptr<StreamPacket> packet;
     status = client.m_writer->GetCurrentPacket(packet);
@@ -692,7 +704,9 @@ void Storage_Module_Server::doStopReplay(const CommandPacketStopReplay& command,
     // The clock-sync message is sent with the live time code.
     MessageEvent message2(*packet, nowInLive, 0, CLOCK_SYNC, "");
     if (message2.GetConstructorStatus() != OKAY) {
-      m_error = "Storage_Module:doStopReplay(): Error constructing MessageClockSync: " + ErrorMessage(message2.GetConstructorStatus());
+      m_error = "Storage_Module:doStopReplay(): Error constructing MessageClockSync: "
+        + ErrorMessage(message.GetConstructorStatus())
+        + " (client may have disconnected)";
       return;
     }
 
@@ -701,7 +715,9 @@ void Storage_Module_Server::doStopReplay(const CommandPacketStopReplay& command,
     if (status != OKAY) {
       // Client may have disconnected.
       if (m_verbosity >= 0) {
-        std::cerr << "Storage_Module::doStopReplay(): Error flushing StreamWriter: " << ErrorMessage(status) << std::endl;
+        std::cerr << "Storage_Module::doStopReplay(): Error flushing StreamWriter: "
+          + ErrorMessage(message.GetConstructorStatus())
+          + " (client may have disconnected)";
       }
       return;
     }
@@ -938,7 +954,6 @@ void Storage_Module::ClientThread()
           /// @todo Consider making a common method for this code and the replay code.
           /// @todo
         }
-
       }
 
     } else {
@@ -1105,11 +1120,6 @@ Status Storage_Module::StartStoring()
 Status Storage_Module::StopStoring()
 {
   std::lock_guard<std::mutex> lock(m_storageMutex);
-
-  // Ensure that we are connected to a server before we start storing (and that we have storage server pointers).
-  if ((m_stream == nullptr) || (m_storageSenders.size() == 0)) {
-    return OKAY;
-  }
 
   // Close all the storage senders.
   for (auto &sender : m_storageSenders) {
