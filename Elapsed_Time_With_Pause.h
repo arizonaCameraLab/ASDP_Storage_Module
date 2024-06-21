@@ -8,6 +8,7 @@
 
 namespace asdp {
 
+  /// @brief A class to measure elapsed time, with the ability to pause and resume the timer.
   class Elapsed_Time_With_Pause {
   public:
     /// @brief Constructor that resets the timer to zero.
