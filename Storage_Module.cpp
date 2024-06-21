@@ -618,6 +618,40 @@ void Storage_Module_Server::doPauseReplay(const CommandPacketPauseReplay& comman
 
   m_replayElapsedTime.pause();
   m_replayPaused = true;
+
+  // Tell all clients that we are paused.
+  Status status;
+  Time timeCode;
+  status = m_timer->GetCoreTime(timeCode);
+  if (status != OKAY) {
+    m_error = "doPauseReplay(): Error getting time: " + ErrorMessage(status);
+    return;
+  }
+  for (auto& client : m_clients) {
+    std::shared_ptr<StreamPacket> packet;
+    status = client.m_writer->GetCurrentPacket(packet);
+    if (status != OKAY) {
+      m_error = "doPauseReplay(): Error getting current packet: " + ErrorMessage(status);
+      return;
+    }
+
+    MessageEvent message(*packet, timeCode, 0, REPLAY_PAUSED, "");
+    if (message.GetConstructorStatus() != OKAY) {
+      m_error = "doPauseReplay(): Error constructing MessageStoredStreamList: "
+        + ErrorMessage(message.GetConstructorStatus())
+        + " (client may have disconnected)";
+      return;
+    }
+
+    // Send the packet.
+    status = client.m_writer->Flush();
+    if (status != OKAY) {
+      m_error = "doPauseReplay(): Error flushing StreamWriter: "
+        + ErrorMessage(status)
+        + " (client may have disconnected)";
+      return;
+    }
+  }
 }
 
 void Storage_Module_Server::doResumeReplay(const CommandPacketResumeReplay& command, ClientState& client)
@@ -629,6 +663,40 @@ void Storage_Module_Server::doResumeReplay(const CommandPacketResumeReplay& comm
 
   m_replayElapsedTime.resume();
   m_replayPaused = false;
+
+  // Tell all clients that we are resumed.
+  Status status;
+  Time timeCode;
+  status = m_timer->GetCoreTime(timeCode);
+  if (status != OKAY) {
+    m_error = "doResumeReplay(): Error getting time: " + ErrorMessage(status);
+    return;
+  }
+  for (auto& client : m_clients) {
+    std::shared_ptr<StreamPacket> packet;
+    status = client.m_writer->GetCurrentPacket(packet);
+    if (status != OKAY) {
+      m_error = "doResumeReplay(): Error getting current packet: " + ErrorMessage(status);
+      return;
+    }
+
+    MessageEvent message(*packet, timeCode, 0, REPLAY_RESUMED, "");
+    if (message.GetConstructorStatus() != OKAY) {
+      m_error = "doResumeReplay(): Error constructing MessageStoredStreamList: "
+        + ErrorMessage(message.GetConstructorStatus())
+        + " (client may have disconnected)";
+      return;
+    }
+
+    // Send the packet.
+    status = client.m_writer->Flush();
+    if (status != OKAY) {
+      m_error = "doResumeReplay(): Error flushing StreamWriter: "
+        + ErrorMessage(status)
+        + " (client may have disconnected)";
+      return;
+    }
+  }
 }
 
 void Storage_Module_Server::doStopReplay(const CommandPacketStopReplay& command, ClientState& client)
