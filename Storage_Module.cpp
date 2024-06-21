@@ -35,16 +35,34 @@ Storage_Module_Server::Storage_Module_Server(Storage_Module* parent, uint32_t se
   // in our stored state after we are constructed.
   std::vector<uint32_t> storedStreamIDs = getStoredStreamIDs();
   if (!storedStreamIDs.empty()) {
-    std::string error = readInitialTimeAndState(storedStreamIDs[0], m_stateMessage);
+    std::string error = ReadInitialTimeAndState(storedStreamIDs[0], m_stateMessage);
     if (!error.empty()) {
       if (m_verbosity >= 0) {
         std::cerr << "Storage_Module_Server::Storage_Module_Server(): readInitialTimeAndState(): " + error << std::endl;
       }
     }
+    if (m_stateMessage != nullptr) {
+      ConfigureStateFromStoredState();
+    }
   }
 }
 
-std::string Storage_Module_Server::readInitialTimeAndState(uint32_t streamID, std::shared_ptr<MessageState>& stateMessage)
+Status Storage_Module_Server::ConfigureStateFromStoredState()
+{
+  if (m_stateMessage == nullptr) {
+    return UNEXPECTED_INTERNAL_STATE;
+  }
+
+  // Get the list of features that the server supports.
+  Status status = m_stateMessage->GetFeatures(m_features);
+  if (status != OKAY) {
+    return status;
+  }
+
+  return OKAY;
+}
+
+std::string Storage_Module_Server::ReadInitialTimeAndState(uint32_t streamID, std::shared_ptr<MessageState>& stateMessage)
 {
   // Clear the state message so we can check below for when we have read one.
   stateMessage.reset();
@@ -127,7 +145,8 @@ void Storage_Module_Server::doEveryLoop()
       m_streamReplayTime = m_replayFirstTime + m_replayElapsedTime.elapsed_time();
     }
 
-    // If we don't have a next packet (may be held because it was in the future), read one.
+    // If we don't have a next packet (may be held because it was in the future), read one and find
+    // its replay time.
     if (m_replayPacket == nullptr) {
       size_t offset = 0;
       Status status = m_replayFiles[0]->ReceiveStreamPacket(0, m_replayPacket, offset);
@@ -154,78 +173,10 @@ void Storage_Module_Server::doEveryLoop()
     // If the current packet is in the present or past then process it.
     if ((m_replayPacket != nullptr) && (m_replayPacketTime <= m_streamReplayTime)) {
 
-      // Go through all the messages in the packet, adjust time, and send them to the clients if appropriate.
-      std::shared_ptr<Message> msg;
-      Status status = m_replayPacket->GetNextMessage(msg);
-      while (msg != nullptr) {
-        // Find out the time of the message and see whether we've run past the current time.
-        Time time;
-        status = msg->GetTime(time);
-        if (status != OKAY) {
-          m_error = "doEveryLoop(): Error getting time from message: " + ErrorMessage(status);
-          return;
-        }
-
-        // Get the message ID so we can know if we need to squeltch it.
-        MessageID msgID;
-        status = msg->GetType(msgID);
-        if (status != OKAY) {
-          m_error = "doEveryLoop(): Error getting message type: " + ErrorMessage(status);
-          return;
-        }
-
-        // Adjust the time of the message to match the current time base.
-        time += m_replayInitialTime;
-        time -= m_replayFirstTime;
-
-        /// @todo Consider making this code common between replay and passthrough.
-        for (auto& client : m_clients) {
-
-          // If this is a state message, then we need to adjust it and send it to the client.
-          // We modify its time by the offsets, add the storage feature, and send it to the client.
-          if (msgID == STATE) {
-            Status status = SendModifiedStateMessage(std::static_pointer_cast<MessageState>(msg), time, client);
-            if (status != OKAY) {
-              m_error = "doEveryLoop(): Error sending modified state message: " + ErrorMessage(status);
-              return;
-            }
-            continue;
-          }
-
-          // Determine that we want to squelch because they events or one that we should not forward.
-          std::vector<MessageID> squelchTypes = { EVENT };
-          if (!client.m_streamingPoses) {
-            squelchTypes.push_back(POSE);
-          }
-          if (!client.m_streamingTemperatures) {
-            squelchTypes.push_back(TEMPERATURE);
-          }
-
-          // If we don't want to squelch this message, then add it to the packet.
-          if (std::find(squelchTypes.begin(), squelchTypes.end(), msgID) == squelchTypes.end()) {
-            std::cout << "XXX " << time.seconds << ":" << time.microseconds << ", message type " << msgID
-              << "; replay time " << m_streamReplayTime.seconds << ":"
-              << m_streamReplayTime.microseconds << msgID << std::endl;
-            std::shared_ptr<StreamPacket> clientPacket;
-            status = client.m_writer->GetCurrentPacket(clientPacket);
-            if (status != OKAY) {
-              m_error = "doEveryLoop(): Error getting current packet: " + ErrorMessage(status);
-              return;
-            }
-            status = msg->CopyToStreamPacket(*clientPacket, time);
-            if (status != OKAY) {
-              m_error = "doEveryLoop(): Error adding message to packet: " + ErrorMessage(status);
-              return;
-            }
-          }
-        }
-
-        // Get the next message in the packet.
-        status = m_replayPacket->GetNextMessage(msg);
-        if (status != OKAY) {
-          m_error = "doEveryLoop(): Error getting next message: " + ErrorMessage(status);
-          return;
-        }
+      std::string ret = ForwardPacketToClients(m_replayPacket, true);
+      if (!ret.empty()) {
+        m_error = "doEveryLoop(): " + ret;
+        return;
       }
 
       // Done with the packet.  We'll look for a new one the next time through.
@@ -476,7 +427,7 @@ void Storage_Module_Server::doStartReplay(const CommandPacketStartReplay& comman
   // Open the main stream file for the stream ID and read the first message from it, storing its time that we
   // will use to offset message times.  Then continue to read messages until we get a status message and use it
   // to set the initial state of the server.
-  std::string error = readInitialTimeAndState(streamID, m_stateMessage);
+  std::string error = ReadInitialTimeAndState(streamID, m_stateMessage);
   if (!error.empty()) {
     if (m_verbosity >= 0) {
       std::cerr << "Storage_Module_Server::doStartReplay(): " + error << std::endl;
@@ -484,6 +435,9 @@ void Storage_Module_Server::doStartReplay(const CommandPacketStartReplay& comman
     // Ignore the error and return.  We will not be able to replay without the file.
     m_replayFiles.clear();
     return;
+  }
+  if (m_stateMessage != nullptr) {
+    ConfigureStateFromStoredState();
   }
   if (m_verbosity > 1) {
     std::cout << " Storage_Module_Server::Opened replay file for stream: " << streamID << std::endl;
@@ -857,13 +811,17 @@ Status Storage_Module_Server::SendModifiedStateMessage(std::shared_ptr<MessageSt
   if (status != OKAY) {
     return status;
   }
-  status = original->GetStoring(storing);
-  if (status != OKAY) {
-    return status;
-  }
   status = original->GetTriggerConfigs(triggers);
   if (status != OKAY) {
     return status;
+  }
+
+  // If the specified time code is zero, read the time from the original message instead.
+  if (timeCode.seconds == 0 && timeCode.microseconds == 0) {
+    status = original->GetTime(timeCode);
+    if (status != OKAY) {
+      return status;
+    }
   }
 
   // Add the storage feature to the list of features if it is not in there.
@@ -913,6 +871,85 @@ Status Storage_Module_Server::SendModifiedStateMessage(std::shared_ptr<MessageSt
   }
 
   return OKAY;
+}
+
+std::string Storage_Module_Server::ForwardPacketToClients(std::shared_ptr<StreamPacket> packet, bool adjustTime)
+{
+  // Go through all the messages in the packet, adjust time, and send them to the clients if appropriate.
+  std::shared_ptr<Message> msg;
+  Status status = packet->GetNextMessage(msg);
+  while (msg != nullptr) {
+    // Find out the time of the message.
+    Time time;
+    status = msg->GetTime(time);
+    if (status != OKAY) {
+      return "ForwardPacketToClients(): Error getting time from message: " + ErrorMessage(status);
+    }
+
+    // Get the message ID so we can know if we need to squeltch it.
+    MessageID msgID;
+    status = msg->GetType(msgID);
+    if (status != OKAY) {
+      return "ForwardPacketToClients(): Error getting message type: " + ErrorMessage(status);
+    }
+
+    // If we've been asked to, adjust the time of the message to match the current time base.
+    if (adjustTime) {
+      time += m_replayInitialTime;
+      time -= m_replayFirstTime;
+    } else {
+      // Default of zero re-uses the original message time, both for the modified state
+      // message and for the copy to stream packet.
+      time = Time();
+    }
+
+    // Send to all clients.
+    for (auto& client : m_clients) {
+
+      // If this is a state message, then we need to adjust it and send it to the client.
+      // We modify its time by the offsets, add the storage feature, and send it to the client.
+      if (msgID == STATE) {
+        Status status = SendModifiedStateMessage(std::static_pointer_cast<MessageState>(msg), time, client);
+        if (status != OKAY) {
+          return "ForwardPacketToClients(): Error sending modified state message: " + ErrorMessage(status);
+        }
+        continue;
+      }
+
+      // Determine whether we want to squelch because they are events or one that we should not forward.
+      std::vector<MessageID> squelchTypes = { };
+      if (!client.m_streamingPoses) {
+        squelchTypes.push_back(POSE);
+      }
+      if (!client.m_streamingTemperatures) {
+        squelchTypes.push_back(TEMPERATURE);
+      }
+
+      // If we don't want to squelch this message, then add it to the packet.
+      if (std::find(squelchTypes.begin(), squelchTypes.end(), msgID) == squelchTypes.end()) {
+        std::cout << "XXX " << time.seconds << ":" << time.microseconds << ", message type " << msgID
+          << "; replay time " << m_streamReplayTime.seconds << ":"
+          << m_streamReplayTime.microseconds << msgID << std::endl;
+        std::shared_ptr<StreamPacket> clientPacket;
+        status = client.m_writer->GetCurrentPacket(clientPacket);
+        if (status != OKAY) {
+          return "ForwardPacketToClients(): Error getting current packet: " + ErrorMessage(status);
+        }
+        status = msg->CopyToStreamPacket(*clientPacket, time);
+        if (status != OKAY) {
+          return "ForwardPacketToClients(): Error adding message to packet: " + ErrorMessage(status);
+        }
+      }
+    }
+
+    // Get the next message in the packet.
+    status = packet->GetNextMessage(msg);
+    if (status != OKAY) {
+      return "ForwardPacketToClients(): Error getting next message: " + ErrorMessage(status);
+    }
+  }
+
+  return "";
 }
 
 Storage_Module::Storage_Module(const std::string& NicNameIn, const std::string& NicNameOut,
@@ -1139,11 +1176,29 @@ void Storage_Module::ClientThread()
         }
 
         // When our associated server object is live, forward the message through it.
-        // Squash any state message and do not pass it on because the server will be generating its own.
+        // Adjust any state messages.
         // Don't foward pose or temperature messages if we were not asked to.
         if (m_server->m_camerasStreaming) {
-          /// @todo Consider making a common method for this code and the replay code.
-          /// @todo
+
+          // Do not change the time of the message, as it is already in the correct time base.
+          std::string ret = m_server->ForwardPacketToClients(response, false);
+          if (!ret.empty()) {
+            if (m_verbosity >= 0) {
+              std::cerr << "Storage_Module::ClientThread() error forwarding packet to clients: " << ret << std::endl;
+              std::cerr << "   (Client may have disconnected)" << std::endl;
+            }
+          }
+
+          // Flush all of the clients' buffers.
+          for (auto& client : m_server->m_clients) {
+            status = client.m_writer->Flush();
+            if (status != OKAY) {
+              if (m_verbosity >= 0) {
+                std::cerr << "Storage_Module::ClientThread() error flushing StreamWriter: " << ErrorMessage(status) << std::endl;
+                std::cerr << "   (Client may have disconnected)" << std::endl;
+              }
+            }
+          }
         }
       }
 
@@ -1222,6 +1277,10 @@ void Storage_Module::ClientThread()
         // Store the state message for the server to use to generate in case it becomes idle because
         // our connection drops.
         m_server->m_stateMessage = std::make_shared<MessageState>(state);
+        if (m_server->m_stateMessage != nullptr) {
+          m_server->ConfigureStateFromStoredState();
+        }
+
 
         // See if recording at start-up is enabled for this server.  If so, create the structures that
         // will be used for writing as if we had received the command to start recording.
@@ -1573,7 +1632,6 @@ void Storage_Module::StreamReceiverThread(std::shared_ptr<ReceiverInfo> receiver
       buffer = newBuffer;
     }
 
-    // If we are streaming live data, we need to send it to the client as well.
     /// @todo
   }
 
