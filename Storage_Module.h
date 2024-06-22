@@ -97,7 +97,10 @@ protected:
   //=============================================================================
   // Replay-related state and methods.
   std::atomic_bool m_replayPaused;  ///< True if we are paused, false if we are playing.
-  Time m_replayInitialTime;         ///< The time sent as part of the most-recent start-replay command.
+  /// The time sent as part of the most-recent start-replay command.  Note that there is
+  /// not one of these per client, but one for the server as a whole.  If any client asks
+  /// for replay at a specific time, they all see replay at that time.
+  Time m_replayInitialTime;
   Time m_replayFirstTime;           ///< The time of the first message in the replay file.
   asdp::ElapsedTimeWithPause m_replayElapsedTime;  ///< The elapsed time of the replay.
   /// The files we are replaying from. The 0th is the main stream and the rest are image streams.

@@ -481,32 +481,18 @@ void Storage_Module_Server::doStartReplay(const CommandPacketStartReplay& comman
   m_replaying = true;
   m_replayPaused = false;
 
-  // Switch the clock base to the initial time of the replay.  We do this by subtracting the current
-  // local time and adding the requested offset, producing two times for "now", one in the live
-  // time base and one in the replay time base.
-  std::chrono::steady_clock::time_point now = std::chrono::steady_clock::now();
-  Time nowTimeStruct = {
-    (uint32_t)std::chrono::duration_cast<std::chrono::microseconds>(now.time_since_epoch()).count() / 1000000,
-    (uint32_t)std::chrono::duration_cast<std::chrono::microseconds>(now.time_since_epoch()).count() % 1000000
-  };
+  // Get the current time in idle or live mode so we can send the START_OF_REPLAY with it.
   Time nowInLive;
   status = m_timer->GetCoreTime(nowInLive);
   if (status != OKAY) {
     m_error = "Storage_Module_Server::doStartReplay(): Error getting time: " + ErrorMessage(status);
     return;
   }
-  status = m_timer->SetCoreNegativeOffset(nowTimeStruct);
-  if (status != OKAY) {
-    m_error = "Storage_Module_Server::doStartReplay(): Error setting negative time offset: " + ErrorMessage(status);
-    return;
-  }
-  status = m_timer->SetCorePositiveOffset(m_replayInitialTime);
-  if (status != OKAY) {
-    m_error = "Storage_Module_Server::doStartReplay(): Error setting positive time offset: " + ErrorMessage(status);
-    return;
+  if (CurrentMode() == Storage_Module_Server::Mode::Live) {
+    /// @todo Figure out how to get the time in that mode.
   }
 
-  // Inform the client that we are replaying by sending an START_OF_REPLAY message
+  // Inform the client that we are replaying by sending a START_OF_REPLAY message
   // followed by a clock-sync message.  Use the old time code for the first and the new for
   // the second.
   for (auto& client : m_clients) {
@@ -666,22 +652,7 @@ void Storage_Module_Server::doStopReplay(const CommandPacketStopReplay& command,
 
   // Switch the clock base from the initial time of the replay back to zero-offset relative to
   // the local clock after storing the current replay time so that we can use it in the END_OF_REPLAY message.
-  Time nowInReplay;
-  Status status = m_timer->GetCoreTime(nowInReplay);
-  if (status != OKAY) {
-    m_error = "Storage_Module_Server::doStopReplay(): Error getting replay time: " + ErrorMessage(status);
-    return;
-  }
-  status = m_timer->SetCoreNegativeOffset(Time(0,0));
-  if (status != OKAY) {
-    m_error = "Storage_Module_Server::doStopReplay(): Error setting negative time offset: " + ErrorMessage(status);
-    return;
-  }
-  status = m_timer->SetCorePositiveOffset(Time(0,0));
-  if (status != OKAY) {
-    m_error = "Storage_Module_Server::doStopReplay(): Error setting positive time offset: " + ErrorMessage(status);
-    return;
-  }
+  Time nowInReplay = m_replayFirstTime + m_replayElapsedTime.ElapsedTime();
 
   // Inform the clients that we are no longer replaying by sending an END_OF_REPLAY message
   // in replay time followed by a clock-sync message in our local time code (if we are idle).
@@ -692,7 +663,7 @@ void Storage_Module_Server::doStopReplay(const CommandPacketStopReplay& command,
     client.m_lastClockSent = { 0, 0 };
 
     std::shared_ptr<StreamPacket> packet;
-    status = client.m_writer->GetCurrentPacket(packet);
+    Status status = client.m_writer->GetCurrentPacket(packet);
     if (status != OKAY) {
       m_error = "Storage_Module_Server::doStopReplay(): Error getting current packet: " + ErrorMessage(status);
       return;
@@ -706,13 +677,13 @@ void Storage_Module_Server::doStopReplay(const CommandPacketStopReplay& command,
 
     if (CurrentMode() == Storage_Module_Server::Mode::Idle) {
       // The clock-sync message is sent with a current time code.
-      Time nowInLive;
-      status = m_timer->GetCoreTime(nowInLive);
+      Time nowInIdle;
+      status = m_timer->GetCoreTime(nowInIdle);
       if (status != OKAY) {
         m_error = "Storage_Module_Server::doStopReplay(): Error getting live time: " + ErrorMessage(status);
         return;
       }
-      MessageEvent message2(*packet, nowInLive, 0, CLOCK_SYNC, "");
+      MessageEvent message2(*packet, nowInIdle, 0, CLOCK_SYNC, "");
       if (message2.GetConstructorStatus() != OKAY) {
         m_error = "Storage_Module_Server::doStopReplay(): Error constructing MessageClockSync: "
           + ErrorMessage(message.GetConstructorStatus())
@@ -895,7 +866,7 @@ std::string Storage_Module_Server::ForwardPacketToClients(std::shared_ptr<Stream
       return "ForwardPacketToClients(): Error getting message type: " + ErrorMessage(status);
     }
 
-    // If we've been asked to, adjust the time of the message to match the current time base.
+    // If we've been asked to, adjust the time of the message to match the replay time base.
     if (adjustTime) {
       time += m_replayInitialTime;
       time -= m_replayFirstTime;
