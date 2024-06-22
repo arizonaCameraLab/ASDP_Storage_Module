@@ -9,23 +9,23 @@
 namespace asdp {
 
   /// @brief A class to measure elapsed time, with the ability to pause and resume the timer.
-  class Elapsed_Time_With_Pause {
+  class ElapsedTimeWithPause {
   public:
     /// @brief Constructor that resets the timer to zero.
-    Elapsed_Time_With_Pause();
+    ElapsedTimeWithPause();
 
     /// @brief Pause the timer.
-    void pause();
+    void Pause();
 
     /// @brief Resume the timer.
-    void resume();
+    void Resume();
 
     /// @brief Reset the timer to zero.
-    void reset();
+    void Reset();
 
     /// @brief Repor elapsed time in secconds, not counting time that was paused.
     /// @return Elapsed time in seconds, not counting time that was paused.
-    double elapsed_time() const;
+    double ElapsedTime() const;
 
     /// @brief Test the class.
     /// @return An empty string if the test passed, otherwise a message describing the failure.

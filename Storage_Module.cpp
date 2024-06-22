@@ -142,7 +142,7 @@ void Storage_Module_Server::doEveryLoop()
     // all of the image-streaming threads can also make use of it.
     {
       std::lock_guard<std::mutex> lock(m_replayMutex);
-      m_streamReplayTime = m_replayFirstTime + m_replayElapsedTime.elapsed_time();
+      m_streamReplayTime = m_replayFirstTime + m_replayElapsedTime.ElapsedTime();
     }
 
     // If we don't have a next packet (may be held because it was in the future), read one and find
@@ -473,7 +473,7 @@ void Storage_Module_Server::doStartReplay(const CommandPacketStartReplay& comman
   /// @todo
 
   // Start replay at the beginning of the file, with offset based on the current steady-clock value.
-  m_replayElapsedTime.reset();
+  m_replayElapsedTime.Reset();
 
   // Switching away from live mode and not paused.
   m_replayAtEnd = false;
@@ -557,7 +557,7 @@ void Storage_Module_Server::doPauseReplay(const CommandPacketPauseReplay& comman
     return;
   }
 
-  m_replayElapsedTime.pause();
+  m_replayElapsedTime.Pause();
   m_replayPaused = true;
 
   // Tell all clients that we are paused.
@@ -602,7 +602,7 @@ void Storage_Module_Server::doResumeReplay(const CommandPacketResumeReplay& comm
     return;
   }
 
-  m_replayElapsedTime.resume();
+  m_replayElapsedTime.Resume();
   m_replayPaused = false;
 
   // Tell all clients that we are resumed.
@@ -666,7 +666,7 @@ void Storage_Module_Server::doStopReplay(const CommandPacketStopReplay& command,
   m_replaying = false;
 
   // Switch the clock base from the initial time of the replay back to zero-offset relative to
-  // the local clock.
+  // the local clock after storing the current replay time so that we can use it in the END_OF_REPLAY message.
   Time nowInReplay;
   Status status = m_timer->GetCoreTime(nowInReplay);
   if (status != OKAY) {
@@ -683,15 +683,10 @@ void Storage_Module_Server::doStopReplay(const CommandPacketStopReplay& command,
     m_error = "Storage_Module_Server::doStopReplay(): Error setting positive time offset: " + ErrorMessage(status);
     return;
   }
-  Time nowInLive;
-  status = m_timer->GetCoreTime(nowInLive);
-  if (status != OKAY) {
-    m_error = "Storage_Module_Server::doStopReplay(): Error getting live time: " + ErrorMessage(status);
-    return;
-  }
 
-  // Inform the client that we are no longer replaying by sending an END_OF_REPLAY message
-  // in replay time followed by a clock-sync message in our local time code.
+  // Inform the clients that we are no longer replaying by sending an END_OF_REPLAY message
+  // in replay time followed by a clock-sync message in our local time code (if we are idle).
+  // The connected server will send clock sync as usual in live mode.
   for (auto& client : m_clients) {
     // Clear the last-sent message times so that we send a new message stream starting now.
     client.m_lastStateSent = { 0, 0 };
@@ -710,13 +705,21 @@ void Storage_Module_Server::doStopReplay(const CommandPacketStopReplay& command,
       return;
     }
 
-    // The clock-sync message is sent with the live time code.
-    MessageEvent message2(*packet, nowInLive, 0, CLOCK_SYNC, "");
-    if (message2.GetConstructorStatus() != OKAY) {
-      m_error = "Storage_Module_Server::doStopReplay(): Error constructing MessageClockSync: "
-        + ErrorMessage(message.GetConstructorStatus())
-        + " (client may have disconnected)";
-      return;
+    if (CurrentMode() == Storage_Module_Server::Mode::Idle) {
+      // The clock-sync message is sent with a current time code.
+      Time nowInLive;
+      status = m_timer->GetCoreTime(nowInLive);
+      if (status != OKAY) {
+        m_error = "Storage_Module_Server::doStopReplay(): Error getting live time: " + ErrorMessage(status);
+        return;
+      }
+      MessageEvent message2(*packet, nowInLive, 0, CLOCK_SYNC, "");
+      if (message2.GetConstructorStatus() != OKAY) {
+        m_error = "Storage_Module_Server::doStopReplay(): Error constructing MessageClockSync: "
+          + ErrorMessage(message.GetConstructorStatus())
+          + " (client may have disconnected)";
+        return;
+      }
     }
 
     // Send the packet.
@@ -1663,7 +1666,7 @@ void Storage_Module::StreamReceiverThread(std::shared_ptr<ReceiverInfo> receiver
 
 std::string Storage_Module::Test()
 {
-  std::string res = asdp::Elapsed_Time_With_Pause::Test();
+  std::string res = asdp::ElapsedTimeWithPause::Test();
   if (res != "") {
     return "Storage_Module::Test(): Elapsed_Time_With_Pause test failed: " + res;
   }

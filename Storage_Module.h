@@ -99,7 +99,7 @@ protected:
   std::atomic_bool m_replayPaused;  ///< True if we are paused, false if we are playing.
   Time m_replayInitialTime;         ///< The time sent as part of the most-recent start-replay command.
   Time m_replayFirstTime;           ///< The time of the first message in the replay file.
-  asdp::Elapsed_Time_With_Pause m_replayElapsedTime;  ///< The elapsed time of the replay.
+  asdp::ElapsedTimeWithPause m_replayElapsedTime;  ///< The elapsed time of the replay.
   /// The files we are replaying from. The 0th is the main stream and the rest are image streams.
   std::vector< std::shared_ptr<ReceiverFile> > m_replayFiles;
   std::mutex m_replayMutex;         ///< Mutex to protect the replay state.
@@ -116,6 +116,8 @@ protected:
 
   //=============================================================================
   /// Override methods to implement the commands as needed.
+
+  /// @todo Set state period and other base-class ones should also forward to the live server if there is one
 
   void doReset(const CommandPacketReset&, ClientState& client) override;
   void doConfigureTrigger(const CommandPacketConfigureTrigger&, ClientState& client) override;

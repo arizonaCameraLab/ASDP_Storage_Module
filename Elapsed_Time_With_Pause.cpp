@@ -6,12 +6,12 @@
 #include "Elapsed_Time_With_Pause.h"
 using namespace asdp;
 
-Elapsed_Time_With_Pause::Elapsed_Time_With_Pause()
+ElapsedTimeWithPause::ElapsedTimeWithPause()
 {
-  reset();
+  Reset();
 }
 
-void Elapsed_Time_With_Pause::pause()
+void ElapsedTimeWithPause::Pause()
 {
   if (!is_paused) {
     is_paused = true;
@@ -19,7 +19,7 @@ void Elapsed_Time_With_Pause::pause()
   }
 }
 
-void Elapsed_Time_With_Pause::resume()
+void ElapsedTimeWithPause::Resume()
 {
   if (is_paused) {
     is_paused = false;
@@ -27,14 +27,14 @@ void Elapsed_Time_With_Pause::resume()
   }
 }
 
-void Elapsed_Time_With_Pause::reset()
+void ElapsedTimeWithPause::Reset()
 {
   start_time = std::chrono::steady_clock::now();
   total_pause_time = std::chrono::duration<double>::zero();
   is_paused = false;
 }
 
-double Elapsed_Time_With_Pause::elapsed_time() const
+double ElapsedTimeWithPause::ElapsedTime() const
 {
   std::chrono::time_point<std::chrono::steady_clock> now;
   if (is_paused) {
@@ -46,14 +46,14 @@ double Elapsed_Time_With_Pause::elapsed_time() const
   return elapsed_time.count();
 }
 
-std::string Elapsed_Time_With_Pause::Test()
+std::string ElapsedTimeWithPause::Test()
 {
   // Construct an object of the class and make sure its initial time is near zero and it counts up
   // over time.
-  Elapsed_Time_With_Pause et;
-  double t0 = et.elapsed_time();
+  ElapsedTimeWithPause et;
+  double t0 = et.ElapsedTime();
   std::this_thread::sleep_for(std::chrono::milliseconds(100));
-  double t1 = et.elapsed_time();
+  double t1 = et.ElapsedTime();
   if (t0 > 1e-3) {
     return "Error: Initial elapsed time should be near zero.";
   }
@@ -62,19 +62,19 @@ std::string Elapsed_Time_With_Pause::Test()
   }
 
   // Pause the timer and make sure it stops counting up.
-  et.pause();
-  double t2 = et.elapsed_time();
+  et.Pause();
+  double t2 = et.ElapsedTime();
   std::this_thread::sleep_for(std::chrono::milliseconds(100));
-  double t3 = et.elapsed_time();
+  double t3 = et.ElapsedTime();
   if (t2 != t3) {
     return "Error: Elapsed time should not change when paused.";
   }
 
   // Resume the timer and make sure it starts counting up again.
-  et.resume();
-  double t4 = et.elapsed_time();
+  et.Resume();
+  double t4 = et.ElapsedTime();
   std::this_thread::sleep_for(std::chrono::milliseconds(100));
-  double t5 = et.elapsed_time();
+  double t5 = et.ElapsedTime();
   if (t4 > t5) {
     return "Error: Elapsed time should be increasing after resuming.";
   }
@@ -83,8 +83,8 @@ std::string Elapsed_Time_With_Pause::Test()
   }
 
   // Reset the timer and make sure it starts counting up from zero again.
-  et.reset();
-  double t6 = et.elapsed_time();
+  et.Reset();
+  double t6 = et.ElapsedTime();
   if (t6 > 1e-3) {
     return "Error: Elapsed time should be near zero after resetting.";
   }
