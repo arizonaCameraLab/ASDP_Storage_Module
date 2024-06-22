@@ -3,7 +3,7 @@
  */
 
 #pragma once
-#include "Elapsed_Time_With_Pause.h"
+#include "ElapsedTimeWithPause.h"
 #include <ASDP_Core_API.h>
 #include <map>
 #include <mutex>

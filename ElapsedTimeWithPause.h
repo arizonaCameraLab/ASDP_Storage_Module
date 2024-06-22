@@ -23,7 +23,7 @@ namespace asdp {
     /// @brief Reset the timer to zero.
     void Reset();
 
-    /// @brief Repor elapsed time in secconds, not counting time that was paused.
+    /// @brief Report elapsed time in secconds, not counting time that was paused.
     /// @return Elapsed time in seconds, not counting time that was paused.
     double ElapsedTime() const;
 

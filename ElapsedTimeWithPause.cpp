@@ -3,7 +3,7 @@
  */
 
 #include <thread>
-#include "Elapsed_Time_With_Pause.h"
+#include "ElapsedTimeWithPause.h"
 using namespace asdp;
 
 ElapsedTimeWithPause::ElapsedTimeWithPause()

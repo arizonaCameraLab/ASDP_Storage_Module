@@ -2,7 +2,6 @@
  * Copyright (C) 2024: Arizona Board of Regents on Behalf of the University of Arizona
  */
 
-#include "Elapsed_Time_With_Pause.h"
 #include "Storage_Module.h"
 #include <iostream>
 #include <algorithm>
