@@ -22,6 +22,7 @@ Storage_Module_Server::Storage_Module_Server(Storage_Module* parent, uint32_t se
   : CoreServerBase(serialNumber, NicName, sendPort, listenPort, maxPayloadSize, verbosity)
   , m_parent(parent)
   , m_replayPaused(false)
+  , m_replayElapsedTime(std::make_shared<ElapsedTimeWithPause>())
 {
   // We start out in "live" mode. This changes when replay is started and stopped.
   // This is true even when we don't have a live conncetion to a parent, according to the spec.
@@ -44,6 +45,14 @@ Storage_Module_Server::Storage_Module_Server(Storage_Module* parent, uint32_t se
     if (m_stateMessage != nullptr) {
       ConfigureStateFromStoredState();
     }
+  }
+}
+
+Storage_Module_Server::~Storage_Module_Server()
+{
+  // Stop the replay if it is running.
+  if (m_replaying) {
+    doStopReplay(CommandPacketStopReplay(), m_clients[0]);
   }
 }
 
@@ -142,7 +151,7 @@ void Storage_Module_Server::doEveryLoop()
     // all of the image-streaming threads can also make use of it.
     {
       std::lock_guard<std::mutex> lock(m_replayMutex);
-      m_streamReplayTime = m_replayFirstTime + m_replayElapsedTime.ElapsedTime();
+      m_streamReplayTime = m_replayFirstTime + m_replayElapsedTime->ElapsedTime();
     }
 
     // If we don't have a next packet (may be held because it was in the future), read one and find
@@ -446,11 +455,8 @@ void Storage_Module_Server::doStartReplay(const CommandPacketStartReplay& comman
     std::cout << "   First time from replay file: " << m_replayFirstTime.seconds << ":" << m_replayFirstTime.microseconds << std::endl;
   }
   
-  // Restart the main stream file so that all packets will be read from it and passed on.
-  m_replayFiles.resize(1);
-  m_replayFiles[0].reset();
-  std::string fileName = m_parent->m_storageRoot + "/" + std::to_string(m_serial) + "/" + std::to_string(streamID) + "/stream0.dat";
-  m_replayFiles[0] = std::make_shared<ReceiverFile>(fileName);
+  // Start replay at the beginning of the file, with offset based on the current steady-clock value.
+  m_replayElapsedTime->Reset();
 
   // Find out how many cameras we have from the state message.
   std::vector<CameraInfo> cameras;
@@ -466,14 +472,27 @@ void Storage_Module_Server::doStartReplay(const CommandPacketStartReplay& comman
   if (m_verbosity > 3) {
     std::cout << "   Number of cameras in replay file: " << cameras.size() << std::endl;
   }
+  m_replayThreads.resize(cameras.size() + 1);
+  m_replayFiles.resize(cameras.size() + 1);
 
-  // Open the camera stream files for the stream ID and start the stream receiver threads.
+  // Restart the main stream file so that all packets will be read from it and passed on.
+  m_replayFiles[0].reset();
+  std::string fileName = m_parent->m_storageRoot + "/" + std::to_string(m_serial) + "/" + std::to_string(streamID) + "/stream0.dat";
+  m_replayFiles[0] = std::make_shared<ReceiverFile>(fileName);
+
+  // Construct the spin-free packet timer that will be used to send packets to the cameras.
+  m_replayPacketTimer = std::make_shared<SpinFreePacketTimer>(m_replayElapsedTime);
+
+  // Open the camera stream files for each stream ID and start the stream receiver threads.
+  m_stopReplayThreads = false;
+  m_replayThreads.resize(cameras.size() + 1);
+  for (uint32_t i = 1; i <= cameras.size(); i++) {
+    std::string fileName = m_parent->m_storageRoot + "/" + std::to_string(m_serial) + "/" + std::to_string(streamID) + "/stream" + std::to_string(i) + ".dat";
+    m_replayFiles[i] = std::make_shared<ReceiverFile>(fileName);
+    m_replayThreads[i] = std::thread(&Storage_Module_Server::ReplayThread, this, i, m_replayFiles[i], m_replayPacketTimer);
+  }
+
   /// @todo
-
-  /// @todo
-
-  // Start replay at the beginning of the file, with offset based on the current steady-clock value.
-  m_replayElapsedTime.Reset();
 
   // Switching away from live mode and not paused.
   m_replayAtEnd = false;
@@ -543,7 +562,7 @@ void Storage_Module_Server::doPauseReplay(const CommandPacketPauseReplay& comman
     return;
   }
 
-  m_replayElapsedTime.Pause();
+  m_replayElapsedTime->Pause();
   m_replayPaused = true;
 
   // Tell all clients that we are paused.
@@ -588,7 +607,7 @@ void Storage_Module_Server::doResumeReplay(const CommandPacketResumeReplay& comm
     return;
   }
 
-  m_replayElapsedTime.Resume();
+  m_replayElapsedTime->Resume();
   m_replayPaused = false;
 
   // Tell all clients that we are resumed.
@@ -636,15 +655,20 @@ void Storage_Module_Server::doStopReplay(const CommandPacketStopReplay& command,
   }
 
   // Stop all of our per-camera receive threads.
-  /// @todo
+  m_stopReplayThreads = true;
+  for (auto& thread : m_replayThreads) {
+    // The zeroeth thread will not be joinable because it is no started; the main thread handles it.
+    if (thread.joinable()) {
+      thread.join();
+    }
+  }
+  m_replayThreads.clear();
+
+  // Stop the spin-free packet timer.
+  m_replayPacketTimer.reset();
 
   // Stop all of our stream receivers.
   m_replayFiles.clear();
-
-  /// @todo
-
-  // Adjust our state values, which may differ from the ones used during replay.
-  /// @todo
 
   // Switching back to live (or idle) mode.
   m_camerasStreaming = true;
@@ -653,7 +677,7 @@ void Storage_Module_Server::doStopReplay(const CommandPacketStopReplay& command,
 
   // Switch the clock base from the initial time of the replay back to zero-offset relative to
   // the local clock after storing the current replay time so that we can use it in the END_OF_REPLAY message.
-  Time nowInReplay = m_replayFirstTime + m_replayElapsedTime.ElapsedTime();
+  Time nowInReplay = m_replayFirstTime + m_replayElapsedTime->ElapsedTime();
 
   // Inform the clients that we are no longer replaying by sending an END_OF_REPLAY message
   // in replay time followed by a clock-sync message in our local time code (if we are idle).
@@ -703,6 +727,116 @@ void Storage_Module_Server::doStopReplay(const CommandPacketStopReplay& command,
           + " (client may have disconnected)";
       }
       return;
+    }
+  }
+}
+
+void Storage_Module_Server::ReplayThread(uint32_t cameraID, std::shared_ptr<ReceiverFile> receiver,
+  std::shared_ptr<asdp::SpinFreePacketTimer> timer)
+{
+  if (m_verbosity > 4) {
+    std::cout << "    Storage_Module_Server::ReplayThread(): Starting thread for camera " << cameraID << std::endl;
+  }
+
+  // Construct the input and output queues for the thread.
+  std::shared_ptr< SpinFreeQueue< std::shared_ptr<asdp::SpinFreePacketTimer::PacketTime> > >
+    inputQueue(new SpinFreeQueue< std::shared_ptr<asdp::SpinFreePacketTimer::PacketTime> >());
+  std::shared_ptr< SpinFreeQueue< std::shared_ptr<StreamPacket> > >
+    outputQueue(new SpinFreeQueue< std::shared_ptr<StreamPacket> >());
+
+  // Add an entry to the timer for this camera.
+  timer->DefineCameraQueues(cameraID, inputQueue, outputQueue);
+
+  // Start the input thread
+  std::thread inputThread(&Storage_Module_Server::ReplayInputThread, this, receiver, inputQueue);
+
+  // While we're not done, get packets from the output queue and send their messages to the clients.
+  while (!m_stopReplayThreads) {
+    std::shared_ptr<StreamPacket> packet;
+    if (outputQueue->dequeue(packet, std::chrono::milliseconds(100))) {
+      std::shared_ptr<Message> msg;
+      Status status = packet->GetNextMessage(msg);
+      if (status != OKAY) {
+        if (m_verbosity >= 0) {
+          std::cerr << "Storage_Module_Server::ReplayThread(): Error getting first message from packet: " << ErrorMessage(status) << std::endl;
+        }
+        break;
+      }
+      while (msg != nullptr) {
+        Time XXXtime;
+        status = msg->GetTime(XXXtime);
+        // Handle the message.
+        /// @todo Filter the packets by client, sending the ones matching the requested time
+        /// and subsetting in space.
+        if (cameraID == 1) std::cout << "XXX Got message for camera " << cameraID << " at " << XXXtime.seconds << ":" << XXXtime.microseconds << std::endl;
+
+        // Get the next message in the packet.
+        status = packet->GetNextMessage(msg);
+        if (status != OKAY) {
+          if (m_verbosity >= 0) {
+            std::cerr << "Storage_Module_Server::ReplayThread(): Error getting message from packet: " << ErrorMessage(status) << std::endl;
+          }
+          break;
+        }
+      }
+
+    }
+  }
+
+  // Wait for the input thread to finish.
+  inputThread.join();
+
+  // Remove our camera from the timer.
+  timer->RemoveCameraQueues(cameraID);
+}
+
+void Storage_Module_Server::ReplayInputThread(std::shared_ptr<ReceiverFile> receiver,
+  std::shared_ptr< SpinFreeQueue< std::shared_ptr<asdp::SpinFreePacketTimer::PacketTime> > > inputQueue)
+{
+  // Receive packets from the receiver and queue them until the queue has enough entries.
+  while (!m_stopReplayThreads) {
+    if (inputQueue->awaitEmpty(5, std::chrono::milliseconds(100))) {
+      std::shared_ptr<asdp::SpinFreePacketTimer::PacketTime> packetTime(new asdp::SpinFreePacketTimer::PacketTime);
+      size_t offset = 0;
+      Status status = receiver->ReceiveStreamPacket(0.0, packetTime->packet, offset);
+      if (status == TIMEOUT) {
+        continue;
+      }
+      if (status != OKAY) {
+        if (m_verbosity >= 0) {
+          std::cerr << "Storage_Module_Server::ReplayInputThread(): Error receiving packet: " << ErrorMessage(status) << std::endl;
+        }
+        break;
+      }
+
+      // Fill in the time, which is the difference between the time in the first message of the packet
+      // and the time of the first message that was replayed.
+      std::shared_ptr<Message> msg;
+      status = packetTime->packet->GetNextMessage(msg);
+      if ((status != OKAY) || (msg == nullptr)) {
+        if (m_verbosity >= 0) {
+          std::cerr << "Storage_Module_Server::ReplayInputThread(): Error getting message from packet: " << ErrorMessage(status) << std::endl;
+        }
+        break;
+      }
+      asdp::Time msgTime;
+      status = msg->GetTime(msgTime);
+      if (status != OKAY) {
+        if (m_verbosity >= 0) {
+          std::cerr << "Storage_Module_Server::ReplayInputThread(): Error getting time from message: " << ErrorMessage(status) << std::endl;
+        }
+        break;
+      }
+      asdp::Time elapsed = (msgTime - m_replayFirstTime);
+      if (msgTime < m_replayFirstTime) {
+        // This stream happened to have a message earlier than the first one in the main stream,
+        // clamp it to 0 so it will get played immediately.
+        elapsed = 0.0;
+      }
+      packetTime->elapsedTime = elapsed.microseconds + (elapsed.seconds * 1e6);
+
+      // Queue the packet time.
+      inputQueue->enqueue(packetTime);
     }
   }
 }
@@ -901,9 +1035,6 @@ std::string Storage_Module_Server::ForwardPacketToClients(std::shared_ptr<Stream
 
       // If we don't want to squelch this message, then add it to the packet.
       if (std::find(squelchTypes.begin(), squelchTypes.end(), msgID) == squelchTypes.end()) {
-        std::cout << "XXX " << time.seconds << ":" << time.microseconds << ", message type " << msgID
-          << "; replay time " << m_streamReplayTime.seconds << ":"
-          << m_streamReplayTime.microseconds << msgID << std::endl;
         std::shared_ptr<StreamPacket> clientPacket;
         status = client.m_writer->GetCurrentPacket(clientPacket);
         if (status != OKAY) {
@@ -1628,9 +1759,7 @@ void Storage_Module::StreamReceiverThread(std::shared_ptr<ReceiverInfo> receiver
   }
 
   // Wait for our queue to drain, then stop our sub-thread and wait for it to finish.
-  while (writeQueue.size() != 0) {
-    std::this_thread::sleep_for(std::chrono::milliseconds(10));
-  }
+  while (writeQueue.awaitEmpty(0, std::chrono::milliseconds(10))) {}
   stop = true;
   writeThread.join();
 }
