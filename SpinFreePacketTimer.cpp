@@ -68,7 +68,6 @@ void SpinFreePacketTimer::WatchThread()
 
     // For each camera, check the cached entry. If there is not one, try and get one from the input queue.
     // If it is time to send the packet, push it onto the output queue.
-/// @todo
     for (uint32_t cameraId : cameraKeys) {
 
       // Get the cached packet time.

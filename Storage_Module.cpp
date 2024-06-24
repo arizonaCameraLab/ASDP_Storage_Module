@@ -133,7 +133,18 @@ std::string Storage_Module_Server::ReadInitialTimeAndState(uint32_t streamID, st
 
 void Storage_Module_Server::clientBeingRemoved(ClientState& client)
 {
-  doStopReplay(CommandPacketStopReplay(), client);
+  // Remove any subregions that this client has set up on any of the cameras.
+  {
+    std::lock_guard<std::mutex> lock(m_replayMutex);
+    for (const auto& pair : m_subregions) {
+      m_subregions[pair.first].clear();
+    }
+  }
+
+  // Stop replay when the last client is being removed.
+  if (m_replaying && (m_clients.size() == 1)) {
+    doStopReplay(CommandPacketStopReplay(), client);
+  }
 }
 
 void Storage_Module_Server::doEveryLoop()
@@ -230,12 +241,46 @@ void Storage_Module_Server::doSoftwareTrigger(const CommandPacketSoftwareTrigger
 
 void Storage_Module_Server::doStreamSubregion(const CommandPacketStreamSubregion& command, ClientState& client)
 {
-  m_error = "@todo implement doStreamSubregion";
+  // Fill in the subregion description and endpoint from the command packet.
+  SubregionDescription subregion;
+  Status status = command.GetRegionDescription(subregion);
+  if (status != OKAY) {
+    m_error = ErrorMessage(status);
+    return;
+  }
+
+  StreamEndpoint endpoint;
+  status = command.GetEndpoint(endpoint);
+  if (status != OKAY) {
+    m_error = ErrorMessage(status);
+    return;
+  }
+
+  // Store the information, locking the mutex while doing so.  If there is alredy an entry for this
+  // endpoint on this camera and client, overwrite it.  If there is not an entry, add it.
+  std::lock_guard<std::mutex> lock(m_replayMutex);
+  m_subregions[subregion.cameraID][client][endpoint] = subregion;
 }
 
 void Storage_Module_Server::doCancelSubregion(const CommandPacketCancelSubregion& command, ClientState& client)
 {
-  m_error = "@todo implement doCancelSubregion";
+  // Get the camera ID and endpoint from the command packet.
+  uint32_t cameraID;
+  Status status = command.GetCamera(cameraID);
+  if (status != OKAY) {
+    m_error = ErrorMessage(status);
+    return;
+  }
+  StreamEndpoint endpoint;
+  Status status = command.GetEndpoint(endpoint);
+  if (status != OKAY) {
+    m_error = ErrorMessage(status);
+    return;
+  }
+
+  // Remove any entry, locking the mutex while doing so.  If there is not an entry, ignore that fact.
+  std::lock_guard<std::mutex> lock(m_replayMutex);
+  m_subregions[cameraID][client].erase(endpoint);
 }
 
 void Storage_Module_Server::doStartRecording(const CommandPacketStartRecording& command, ClientState& client)
@@ -675,8 +720,6 @@ void Storage_Module_Server::doStopReplay(const CommandPacketStopReplay& command,
   m_replayPacket.reset();
   m_replaying = false;
 
-  // Switch the clock base from the initial time of the replay back to zero-offset relative to
-  // the local clock after storing the current replay time so that we can use it in the END_OF_REPLAY message.
   Time nowInReplay = m_replayFirstTime + m_replayElapsedTime->ElapsedTime();
 
   // Inform the clients that we are no longer replaying by sending an END_OF_REPLAY message
@@ -763,12 +806,43 @@ void Storage_Module_Server::ReplayThread(uint32_t cameraID, std::shared_ptr<Rece
         break;
       }
       while (msg != nullptr) {
-        Time XXXtime;
-        status = msg->GetTime(XXXtime);
-        // Handle the message.
-        /// @todo Filter the packets by client, sending the ones matching the requested time
-        /// and subsetting in space.
-        if (cameraID == 1) std::cout << "XXX Got message for camera " << cameraID << " at " << XXXtime.seconds << ":" << XXXtime.microseconds << std::endl;
+        // Adjust the time on the message.
+        Time time;
+        status = msg->GetTime(time);
+        if (status != OKAY) {
+          if (m_verbosity >= 0) {
+            std::cerr << "Storage_Module_Server::ReplayThread(): Error getting time from message: " << ErrorMessage(status) << std::endl;
+          }
+          break;
+        }
+        if (cameraID == 4) std::cout << "XXX Got message for camera " << cameraID << " at " << time.seconds << ":" << XXXtime.microseconds << std::endl;
+        if (time < m_replayFirstTime) {
+          time = Time(0, 0);
+        } else {
+          time -= m_replayFirstTime;
+        }
+        time += m_replayInitialTime;
+
+        // Handle the message by sending it to all endpoints on all clients corresponding to this camera.
+        std::map<ClientState, std::map<StreamEndpoint, SubregionDescription> > myRegions;
+        {
+          std::lock_guard<std::mutex> lock(m_replayMutex);
+          myRegions = m_subregions[cameraID];
+        }
+        for (const auto& clientMapsPair : myRegions) {
+          const ClientState &client = clientMapsPair.first;
+          for (const auto& subregionMapsPair : clientMapsPair.second) {
+            const StreamEndpoint &endpoint = subregionMapsPair.first;
+            const SubregionDescription &subregion = subregionMapsPair.second;
+
+            // Copy the message to the client's streamwriter using its UDP sender, adjusting its time.
+
+            /// @todo
+
+            /// @todo Filter the packets by client, sending the ones matching the requested time
+            /// and subsetting in space.
+          }
+        }
 
         // Get the next message in the packet.
         status = packet->GetNextMessage(msg);
@@ -779,7 +853,6 @@ void Storage_Module_Server::ReplayThread(uint32_t cameraID, std::shared_ptr<Rece
           break;
         }
       }
-
     }
   }
 
@@ -796,6 +869,7 @@ void Storage_Module_Server::ReplayInputThread(std::shared_ptr<ReceiverFile> rece
   // Receive packets from the receiver and queue them until the queue has enough entries.
   while (!m_stopReplayThreads) {
     if (inputQueue->awaitEmpty(5, std::chrono::milliseconds(100))) {
+
       std::shared_ptr<asdp::SpinFreePacketTimer::PacketTime> packetTime(new asdp::SpinFreePacketTimer::PacketTime);
       size_t offset = 0;
       Status status = receiver->ReceiveStreamPacket(0.0, packetTime->packet, offset);
@@ -810,7 +884,7 @@ void Storage_Module_Server::ReplayInputThread(std::shared_ptr<ReceiverFile> rece
       }
 
       // Fill in the time, which is the difference between the time in the first message of the packet
-      // and the time of the first message that was replayed.
+      // and the time of the first message that was replayed from this stored data set in the main stream.
       std::shared_ptr<Message> msg;
       status = packetTime->packet->GetNextMessage(msg);
       if ((status != OKAY) || (msg == nullptr)) {
@@ -835,10 +909,11 @@ void Storage_Module_Server::ReplayInputThread(std::shared_ptr<ReceiverFile> rece
       }
       packetTime->elapsedTime = elapsed.microseconds + (elapsed.seconds * 1e6);
 
-      // Queue the packet time.
+      // Queue the packet+time.
       inputQueue->enqueue(packetTime);
     }
   }
+  std::cout << "XXX queue size " << inputQueue->size() << std::endl;
 }
 
 Storage_Module_Server::Mode Storage_Module_Server::CurrentMode() const
@@ -1283,7 +1358,7 @@ void Storage_Module::ClientThread()
         // When our associated server object is live, forward the message through it.
         // Adjust any state messages.
         // Don't foward pose or temperature messages if we were not asked to.
-        if (m_server->m_camerasStreaming) {
+        if (m_server->CurrentMode() == Storage_Module_Server::Mode::Live) {
 
           // Do not change the time of the message, as it is already in the correct time base.
           std::string ret = m_server->ForwardPacketToClients(response, false);
@@ -1736,8 +1811,6 @@ void Storage_Module::StreamReceiverThread(std::shared_ptr<ReceiverInfo> receiver
       // Make the new buffer the current buffer.
       buffer = newBuffer;
     }
-
-    /// @todo
   }
 
   // Write the last partial buffer to disk if it has any data in it.  First zero-pad it to an even multiple
