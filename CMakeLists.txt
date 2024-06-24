@@ -77,10 +77,12 @@ endif (BUILD_DOXYGEN)
 set (Storage_Module_HEADERS
 	Storage_Module.h
   ElapsedTimeWithPause.h
+  SpinFreePacketTimer.h
 )
 set (Storage_Module_SOURCES
 	Storage_Module.cpp
   ElapsedTimeWithPause.cpp
+  SpinFreePacketTimer.cpp
 )
 add_library(Storage_Module STATIC ${Storage_Module_SOURCES} ${Storage_Module_HEADERS})
 target_include_directories(Storage_Module PUBLIC

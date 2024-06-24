@@ -3,6 +3,7 @@
  */
 
 #include "Storage_Module.h"
+#include "SpinFreePacketTimer.h"
 #include <iostream>
 #include <algorithm>
 #include <limits>
@@ -1639,6 +1640,11 @@ std::string Storage_Module::Test()
   std::string res = asdp::ElapsedTimeWithPause::Test();
   if (res != "") {
     return "Storage_Module::Test(): Elapsed_Time_With_Pause test failed: " + res;
+  }
+
+  res = asdp::SpinFreePacketTimer::Test();
+  if (res != "") {
+    return "Storage_Module::Test(): SpinFreePacketTimer test failed: " + res;
   }
 
   return "@todo implement Test()";

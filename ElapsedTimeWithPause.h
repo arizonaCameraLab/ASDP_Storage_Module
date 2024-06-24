@@ -5,6 +5,7 @@
 #pragma once
 #include <chrono>
 #include <string>
+#include <mutex>
 
 namespace asdp {
 
@@ -36,6 +37,7 @@ namespace asdp {
     std::chrono::duration<double> total_pause_time;
     bool is_paused;
     std::chrono::time_point<std::chrono::steady_clock> pause_start_time;
+    mutable std::mutex m_mutex;
   };
 
 } // namespace asdp
