@@ -256,10 +256,17 @@ void Storage_Module_Server::doStreamSubregion(const CommandPacketStreamSubregion
     return;
   }
 
-  // Store the information, locking the mutex while doing so.  If there is alredy an entry for this
+  // Make a UDP sender for the endpoint and attach it to a writer.
+  std::shared_ptr<SenderUDP> sender = std::make_shared<SenderUDP>(endpoint);
+  std::shared_ptr<StreamWriter> writer = std::make_shared<StreamWriter>(sender, m_maxPayloadSize);
+
+  // Store the information, locking the mutex while doing so.  If there is already an entry for this
   // endpoint on this camera and client, overwrite it.  If there is not an entry, add it.
+  ReplayInfo info;
+  info.subregion = subregion;
+  info.writer = writer;
   std::lock_guard<std::mutex> lock(m_replayMutex);
-  m_subregions[subregion.cameraID][client][endpoint] = subregion;
+  m_subregions[subregion.cameraID][client][endpoint] = info;
 }
 
 void Storage_Module_Server::doCancelSubregion(const CommandPacketCancelSubregion& command, ClientState& client)
@@ -272,7 +279,7 @@ void Storage_Module_Server::doCancelSubregion(const CommandPacketCancelSubregion
     return;
   }
   StreamEndpoint endpoint;
-  Status status = command.GetEndpoint(endpoint);
+  status = command.GetEndpoint(endpoint);
   if (status != OKAY) {
     m_error = ErrorMessage(status);
     return;
@@ -815,7 +822,7 @@ void Storage_Module_Server::ReplayThread(uint32_t cameraID, std::shared_ptr<Rece
           }
           break;
         }
-        if (cameraID == 4) std::cout << "XXX Got message for camera " << cameraID << " at " << time.seconds << ":" << XXXtime.microseconds << std::endl;
+        if (cameraID == 4) std::cout << "XXX Got message for camera " << cameraID << " at " << time.seconds << ":" << time.microseconds << std::endl;
         if (time < m_replayFirstTime) {
           time = Time(0, 0);
         } else {
@@ -824,23 +831,41 @@ void Storage_Module_Server::ReplayThread(uint32_t cameraID, std::shared_ptr<Rece
         time += m_replayInitialTime;
 
         // Handle the message by sending it to all endpoints on all clients corresponding to this camera.
-        std::map<ClientState, std::map<StreamEndpoint, SubregionDescription> > myRegions;
+        std::map<ClientState, std::map<StreamEndpoint, ReplayInfo> > myReplayInfo;
         {
           std::lock_guard<std::mutex> lock(m_replayMutex);
-          myRegions = m_subregions[cameraID];
+          myReplayInfo = m_subregions[cameraID];
         }
-        for (const auto& clientMapsPair : myRegions) {
+        for (const auto& clientMapsPair : myReplayInfo) {
           const ClientState &client = clientMapsPair.first;
           for (const auto& subregionMapsPair : clientMapsPair.second) {
             const StreamEndpoint &endpoint = subregionMapsPair.first;
-            const SubregionDescription &subregion = subregionMapsPair.second;
-
-            // Copy the message to the client's streamwriter using its UDP sender, adjusting its time.
-
-            /// @todo
+            const ReplayInfo &info = subregionMapsPair.second;
 
             /// @todo Filter the packets by client, sending the ones matching the requested time
             /// and subsetting in space.
+
+            // Copy the message to the client's streamwriter, adjusting its time.
+            std::shared_ptr<StreamPacket> packet;
+            status = client.m_writer->GetCurrentPacket(packet);
+            if (status != OKAY) {
+              m_error = "Storage_Module_Server::ReplayThread(): Error getting current packet: " + ErrorMessage(status);
+              return;
+            }
+            status = msg->CopyToStreamPacket(*packet, time);
+            if (status != OKAY) {
+              m_error = "Storage_Module_Server::ReplayThread(): Error adding message to packet: " + ErrorMessage(status);
+              return;
+            }
+
+            // Send the packet.
+            status = client.m_writer->Flush();
+            if (status != OKAY) {
+              m_error = "Storage_Module_Server::ReplayThread(): Error flushing StreamWriter: "
+                + ErrorMessage(status)
+                + " (client may have disconnected)";
+              return;
+            }
           }
         }
 
