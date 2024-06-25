@@ -3,6 +3,15 @@
  */
 
 #pragma once
+
+/**
+* @file ElapsedTimeWithPause.h
+* @brief Apache Strap-Down Pilotage utility class to maintain pausable elapsed time.
+*
+* @author ReliaSolve.
+* @date June 24, 2024.
+*/
+
 #include <chrono>
 #include <string>
 #include <mutex>

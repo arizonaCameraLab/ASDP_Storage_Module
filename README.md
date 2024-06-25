@@ -62,11 +62,14 @@ zero or more directories for each session that has been recorded.  There is a fi
 named **config.json** in the root directory that contains the configuration information
 for the Storage Module.  The default file (created if there is no file) is shown below:
   
-  ```
-  {
-    "storingAtRestart": false
-  }
-  ```
+```
+{
+  "diskBlockSize": 1024,
+  "highWaterMark": 515288,
+  "storingAtRestart": false,
+  "totalBufferSize": 524288
+}
+```
 
 ## Utilities
 

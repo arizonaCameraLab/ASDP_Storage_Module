@@ -3,6 +3,15 @@
  */
 
 #pragma once
+
+ /**
+ * @file Storage_Module.h
+ * @brief Apache Strap-Down Pilotage classes to implement a Storage (and replay) Module.
+ *
+ * @author ReliaSolve.
+ * @date 2024.
+ */
+
 #include "ElapsedTimeWithPause.h"
 #include "SpinFreePacketTimer.h"
 #include <ASDP_Core_API.h>

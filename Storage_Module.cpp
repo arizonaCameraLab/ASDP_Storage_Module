@@ -267,6 +267,7 @@ void Storage_Module_Server::doStreamSubregion(const CommandPacketStreamSubregion
   info.writer = writer;
   std::lock_guard<std::mutex> lock(m_replayMutex);
   m_subregions[subregion.cameraID][client][endpoint] = info;
+  //std::cout << "XXX Done with doStreamSubregion()" << std::endl;
 }
 
 void Storage_Module_Server::doCancelSubregion(const CommandPacketCancelSubregion& command, ClientState& client)
@@ -386,10 +387,10 @@ void Storage_Module_Server::doListStoredStreams(const CommandPacketListStoredStr
     // Send the packet.
     status = client.m_writer->Flush();
     if (status != OKAY) {
-      m_error = "doListStoredStreams(): Error flushing StreamWriter: "
-        + ErrorMessage(status)
-        + " (client may have disconnected)";
-      return;
+      if (m_verbosity >= 0) {
+        std::cerr << "doListStoredStreams(): Error flushing StreamWriter: " << ErrorMessage(status) << std::endl;
+        std::cerr << "  (Client may have disconnected)" << std::endl;
+      }
     }
   }
 }
@@ -602,7 +603,6 @@ void Storage_Module_Server::doStartReplay(const CommandPacketStartReplay& comman
         std::cerr << "Storage_Module_Server::doStartReplay(): Error flushing StreamWriter: " << ErrorMessage(status) << std::endl;
         std::cerr << "  (Client may have disconnected)" << std::endl;
       }
-      return;
     }
   }
 }
@@ -644,10 +644,10 @@ void Storage_Module_Server::doPauseReplay(const CommandPacketPauseReplay& comman
     // Send the packet.
     status = client.m_writer->Flush();
     if (status != OKAY) {
-      m_error = "doPauseReplay(): Error flushing StreamWriter: "
-        + ErrorMessage(status)
-        + " (client may have disconnected)";
-      return;
+      if (m_verbosity >= 0) {
+        std::cerr << "doPauseReplay(): Error flushing StreamWriter: " << ErrorMessage(status) << std::endl;
+        std::cerr << "  (Client may have disconnected)" << std::endl;
+      }
     }
   }
 }
@@ -689,18 +689,16 @@ void Storage_Module_Server::doResumeReplay(const CommandPacketResumeReplay& comm
     // Send the packet.
     status = client.m_writer->Flush();
     if (status != OKAY) {
-      m_error = "doResumeReplay(): Error flushing StreamWriter: "
-        + ErrorMessage(status)
-        + " (client may have disconnected)";
-      return;
+      if (m_verbosity >= 0) {
+        std::cerr << "doResumeReplay(): Error flushing StreamWriter: " << ErrorMessage(status) << std::endl;
+        std::cerr << "  (Client may have disconnected)" << std::endl;
+      }
     }
   }
 }
 
 void Storage_Module_Server::doStopReplay(const CommandPacketStopReplay& command, ClientState& client)
 {
-  std::lock_guard<std::mutex> lock(m_replayMutex);
-
   // Do nothing if we're not replaying.
   if (!m_replaying) {
     return;
@@ -714,6 +712,9 @@ void Storage_Module_Server::doStopReplay(const CommandPacketStopReplay& command,
       thread.join();
     }
   }
+
+  // Wait to grab the lock until all threads have stopped because they may be using the mutex.
+  std::lock_guard<std::mutex> lock(m_replayMutex);
   m_replayThreads.clear();
 
   // Stop the spin-free packet timer.
@@ -776,7 +777,6 @@ void Storage_Module_Server::doStopReplay(const CommandPacketStopReplay& command,
           + ErrorMessage(message.GetConstructorStatus())
           + " (client may have disconnected)";
       }
-      return;
     }
   }
 }
@@ -822,7 +822,7 @@ void Storage_Module_Server::ReplayThread(uint32_t cameraID, std::shared_ptr<Rece
           }
           break;
         }
-        if (cameraID == 4) std::cout << "XXX Got message for camera " << cameraID << " at " << time.seconds << ":" << time.microseconds << std::endl;
+        if (cameraID == 1) std::cout << "XXX Got message for camera " << cameraID << " at " << time.seconds << ":" << time.microseconds << std::endl;
         if (time < m_replayFirstTime) {
           time = Time(0, 0);
         } else {
@@ -847,7 +847,7 @@ void Storage_Module_Server::ReplayThread(uint32_t cameraID, std::shared_ptr<Rece
 
             // Copy the message to the client's streamwriter, adjusting its time.
             std::shared_ptr<StreamPacket> packet;
-            status = client.m_writer->GetCurrentPacket(packet);
+            status = info.writer->GetCurrentPacket(packet);
             if (status != OKAY) {
               m_error = "Storage_Module_Server::ReplayThread(): Error getting current packet: " + ErrorMessage(status);
               return;
@@ -859,12 +859,12 @@ void Storage_Module_Server::ReplayThread(uint32_t cameraID, std::shared_ptr<Rece
             }
 
             // Send the packet.
-            status = client.m_writer->Flush();
+            status = info.writer->Flush();
             if (status != OKAY) {
-              m_error = "Storage_Module_Server::ReplayThread(): Error flushing StreamWriter: "
-                + ErrorMessage(status)
-                + " (client may have disconnected)";
-              return;
+              if (m_verbosity >= 0) {
+                std::cerr << "Storage_Module_Server::ReplayThread(): Error flushing StreamWriter: " << ErrorMessage(status) << std::endl;
+                std::cerr << "  (Client may have disconnected)" << std::endl;
+              }
             }
           }
         }
@@ -1850,6 +1850,7 @@ void Storage_Module::StreamReceiverThread(std::shared_ptr<ReceiverInfo> receiver
         break;
       }
       while (msg != nullptr) {
+        /// @todo Make this a common function with the replay thread?
 
         // Handle the message by sending it to all endpoints on all clients corresponding to this camera.
         std::map<CoreServerBase::ClientState, std::map<StreamEndpoint, Storage_Module_Server::ReplayInfo> > myReplayInfo;
@@ -1868,7 +1869,7 @@ void Storage_Module::StreamReceiverThread(std::shared_ptr<ReceiverInfo> receiver
 
             // Copy the message to the client's streamwriter, not adjusting its time.
             std::shared_ptr<StreamPacket> packet;
-            status = client.m_writer->GetCurrentPacket(packet);
+            status = info.writer->GetCurrentPacket(packet);
             if (status != OKAY) {
               if (m_verbosity >= 0) {
                 std::cerr << "Storage_Module::StreamReceiverThread(): Error getting current packet: " + ErrorMessage(status);
@@ -1884,7 +1885,7 @@ void Storage_Module::StreamReceiverThread(std::shared_ptr<ReceiverInfo> receiver
             }
 
             // Send the packet.
-            status = client.m_writer->Flush();
+            status = info.writer->Flush();
             if (status != OKAY) {
               if (m_verbosity >= 0) {
                 std::cerr << "Storage_Module::StreamReceiverThread(): Error flushing StreamWriter: "

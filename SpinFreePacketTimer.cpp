@@ -4,14 +4,6 @@
 
 #pragma once
 
- /**
- * @file SpinFreePacketTimer.cpp
- * @brief Apache Strap-Down Pilotage utility class to provide spin-free stream-packet buffering.
- *
- * @author ReliaSolve.
- * @date June 24, 2024.
- */
-
 #include "SpinFreePacketTimer.h"
 
 using namespace asdp;
