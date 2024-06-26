@@ -1104,7 +1104,12 @@ std::string Storage_Module_Server::ForwardPacketToClients(std::shared_ptr<Stream
     // If we've been asked to, adjust the time of the message to match the replay time base.
     if (adjustTime) {
       time += m_replayInitialTime;
-      time -= m_replayFirstTime;
+      // Never wrap around to negative time.
+      if (time >= m_replayFirstTime) {
+        time -= m_replayFirstTime;
+      } else {
+        time = Time(0, 0);
+      }
     } else {
       // Default of zero re-uses the original message time, both for the modified state
       // message and for the copy to stream packet.
@@ -1815,7 +1820,7 @@ void Storage_Module::StreamReceiverThread(std::shared_ptr<ReceiverInfo> receiver
     // See if we've reached the high water mark for the buffer.  If so, copy the remaining bytes
     // past the last full disk block into a new buffer and then write the full-block-sized portion
     // of the old buffer to disk.
-    if (bytesInBuffer >= m_persistentState.DiskBlockSize()) {
+    if (bytesInBuffer >= m_persistentState.HighWaterMark()) {
       // Copy the remaining bytes into a new buffer.
       std::shared_ptr<std::vector<uint8_t>> newBuffer = bufferPool.GetBuffer();
       uint32_t fullBlocks = m_persistentState.DiskBlockSize() * (bytesInBuffer / m_persistentState.DiskBlockSize());
