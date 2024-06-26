@@ -3,15 +3,24 @@
  */
 
 #include <iostream>
-#include <Storage_Module.h>
+#include "ElapsedTimeWithPause.h"
+#include "SpinFreePacketTimer.h"
 
 int main(int argc, char** argv)
 {
-  std::string ret = asdp::Storage_Module::Test();
-  if (ret.size() > 0) {
-    std::cerr << "Error: " << ret << std::endl;
+  // Test classes that we depend on.
+  std::string res = asdp::ElapsedTimeWithPause::Test();
+  if (res != "") {
+    std::cerr << "Elapsed_Time_With_Pause test failed: " + res << std::endl;
     return 1;
   }
-  std::cout << "Success" << std::endl;
+
+  res = asdp::SpinFreePacketTimer::Test();
+  if (res != "") {
+    std::cerr << "Storage_Module::Test(): SpinFreePacketTimer test failed: " + res << std::endl;
+  }
+
+  std::cout << "Run Storage_Validating_Client from ASDP_Core_API repository to further test." << std::endl;
+
   return 0;
 }

@@ -212,10 +212,6 @@ public:
   /// @brief Get the current status of the object.
   Status GetCurrentStatus() const;
 
-  /// @brief Test the class.
-  /// @return Empty string on success, message describing the problem on failure.
-  static std::string Test();
-
 protected:
 
   /// The current status of the object.

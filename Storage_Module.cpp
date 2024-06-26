@@ -544,8 +544,6 @@ void Storage_Module_Server::doStartReplay(const CommandPacketStartReplay& comman
     m_replayThreads[i] = std::thread(&Storage_Module_Server::ReplayThread, this, i, m_replayFiles[i], m_replayPacketTimer);
   }
 
-  /// @todo
-
   // Switching away from live mode and not paused.
   m_replayAtEnd = false;
   m_camerasStreaming = false;
@@ -1723,8 +1721,6 @@ Status Storage_Module::ConfigureClientConnection(const MessageState& response)
 
   /// @todo We may want two triggers when we have stereo cameras along with narrow-field cameras.
 
-  /// @todo Set the relevant state values in the server to those of the client we just connected to.
-
   return OKAY;
 }
 
@@ -1934,21 +1930,6 @@ void Storage_Module::StreamReceiverThread(std::shared_ptr<ReceiverInfo> receiver
   while (writeQueue.awaitEmpty(0, std::chrono::milliseconds(10))) {}
   stop = true;
   writeThread.join();
-}
-
-std::string Storage_Module::Test()
-{
-  std::string res = asdp::ElapsedTimeWithPause::Test();
-  if (res != "") {
-    return "Storage_Module::Test(): Elapsed_Time_With_Pause test failed: " + res;
-  }
-
-  res = asdp::SpinFreePacketTimer::Test();
-  if (res != "") {
-    return "Storage_Module::Test(): SpinFreePacketTimer test failed: " + res;
-  }
-
-  return "@todo implement Test()";
 }
 
 Storage_Module::PersistentState::PersistentState(const std::string& filename)
