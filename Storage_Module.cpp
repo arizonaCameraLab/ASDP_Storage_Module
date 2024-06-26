@@ -267,7 +267,6 @@ void Storage_Module_Server::doStreamSubregion(const CommandPacketStreamSubregion
   info.writer = writer;
   std::lock_guard<std::mutex> lock(m_replayMutex);
   m_subregions[subregion.cameraID][client][endpoint] = info;
-  //std::cout << "XXX Done with doStreamSubregion()" << std::endl;
 }
 
 void Storage_Module_Server::doCancelSubregion(const CommandPacketCancelSubregion& command, ClientState& client)
@@ -822,7 +821,6 @@ void Storage_Module_Server::ReplayThread(uint32_t cameraID, std::shared_ptr<Rece
           }
           break;
         }
-        if (cameraID == 1) std::cout << "XXX Got message for camera " << cameraID << " at " << time.seconds << ":" << time.microseconds << std::endl;
         if (time < m_replayFirstTime) {
           time = Time(0, 0);
         } else {
@@ -932,13 +930,12 @@ void Storage_Module_Server::ReplayInputThread(std::shared_ptr<ReceiverFile> rece
         // clamp it to 0 so it will get played immediately.
         elapsed = 0.0;
       }
-      packetTime->elapsedTime = elapsed.microseconds + (elapsed.seconds * 1e6);
+      packetTime->elapsedTime = elapsed.seconds + (elapsed.microseconds / 1e6);
 
       // Queue the packet+time.
       inputQueue->enqueue(packetTime);
     }
   }
-  std::cout << "XXX queue size " << inputQueue->size() << std::endl;
 }
 
 Storage_Module_Server::Mode Storage_Module_Server::CurrentMode() const
@@ -1129,7 +1126,7 @@ std::string Storage_Module_Server::ForwardPacketToClients(std::shared_ptr<Stream
         continue;
       }
 
-      // Determine whether we want to squelch because they are events or one that we should not forward.
+      // Determine whether we want to squelch because they are ones that we should not forward.
       std::vector<MessageID> squelchTypes = { };
       if (!client.m_streamingPoses) {
         squelchTypes.push_back(POSE);
