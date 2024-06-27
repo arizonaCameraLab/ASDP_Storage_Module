@@ -144,6 +144,15 @@ protected:
   void ReplayInputThread(std::shared_ptr<ReceiverFile> receiver,
     std::shared_ptr< SpinFreeQueue< std::shared_ptr<asdp::SpinFreePacketTimer::PacketTime> > > inputQueue);
 
+  /// @brief Send all messages from the image packet to relevant clients.
+  /// @param cameraID The ID of the camera the packet is streaming from.
+  /// @param packet The packet to send the messages from.
+  /// @param subtractTime The time to subtract from the time of each message, clamping to zero.
+  /// @param addTime The time to add to the time of each message after subtracting the first.
+  /// @return Empty string on success, message describing the problem on failure.
+  std::string SendImageStreamPacketToClients(uint32_t cameraID, std::shared_ptr<StreamPacket> packet,
+    Time subtractTime = Time(), Time addTime = Time());
+
   /// Structure to hold the information needed to replay to a single camera.
   struct ReplayInfo {
     SubregionDescription subregion;  ///< The subregion to replay to.

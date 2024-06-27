@@ -801,77 +801,10 @@ void Storage_Module_Server::ReplayThread(uint32_t cameraID, std::shared_ptr<Rece
   while (!m_stopReplayThreads) {
     std::shared_ptr<StreamPacket> packet;
     if (outputQueue->dequeue(packet, std::chrono::milliseconds(100))) {
-      std::shared_ptr<Message> msg;
-      Status status = packet->GetNextMessage(msg);
-      if (status != OKAY) {
+      std::string ret = SendImageStreamPacketToClients(cameraID, packet, m_replayFirstTime, m_replayInitialTime);
+      if (!ret.empty()) {
         if (m_verbosity >= 0) {
-          std::cerr << "Storage_Module_Server::ReplayThread(): Error getting first message from packet: " << ErrorMessage(status) << std::endl;
-        }
-        break;
-      }
-      while (msg != nullptr) {
-        // Adjust the time on the message.
-        Time time;
-        status = msg->GetTime(time);
-        if (status != OKAY) {
-          if (m_verbosity >= 0) {
-            std::cerr << "Storage_Module_Server::ReplayThread(): Error getting time from message: " << ErrorMessage(status) << std::endl;
-          }
-          break;
-        }
-        if (time < m_replayFirstTime) {
-          time = Time(0, 0);
-        } else {
-          time -= m_replayFirstTime;
-        }
-        time += m_replayInitialTime;
-
-        // Handle the message by sending it to all endpoints on all clients corresponding to this camera.
-        std::map<ClientState, std::map<StreamEndpoint, ReplayInfo> > myReplayInfo;
-        {
-          std::lock_guard<std::mutex> lock(m_replayMutex);
-          myReplayInfo = m_subregions[cameraID];
-        }
-        for (const auto& clientMapsPair : myReplayInfo) {
-          const ClientState &client = clientMapsPair.first;
-          for (const auto& subregionMapsPair : clientMapsPair.second) {
-            const StreamEndpoint &endpoint = subregionMapsPair.first;
-            const ReplayInfo &info = subregionMapsPair.second;
-
-            /// @todo Filter the packets by client, sending the ones matching the requested time
-            /// and subsetting in space.
-
-            // Copy the message to the client's streamwriter, adjusting its time.
-            std::shared_ptr<StreamPacket> packet;
-            status = info.writer->GetCurrentPacket(packet);
-            if (status != OKAY) {
-              m_error = "Storage_Module_Server::ReplayThread(): Error getting current packet: " + ErrorMessage(status);
-              return;
-            }
-            status = msg->CopyToStreamPacket(*packet, time);
-            if (status != OKAY) {
-              m_error = "Storage_Module_Server::ReplayThread(): Error adding message to packet: " + ErrorMessage(status);
-              return;
-            }
-
-            // Send the packet.
-            status = info.writer->Flush();
-            if (status != OKAY) {
-              if (m_verbosity >= 0) {
-                std::cerr << "Storage_Module_Server::ReplayThread(): Error flushing StreamWriter: " << ErrorMessage(status) << std::endl;
-                std::cerr << "  (Client may have disconnected)" << std::endl;
-              }
-            }
-          }
-        }
-
-        // Get the next message in the packet.
-        status = packet->GetNextMessage(msg);
-        if (status != OKAY) {
-          if (m_verbosity >= 0) {
-            std::cerr << "Storage_Module_Server::ReplayThread(): Error getting message from packet: " << ErrorMessage(status) << std::endl;
-          }
-          break;
+          std::cerr << "Storage_Module_Server::ReplayThread(): Error sending stream packet: " + ret << std::endl;
         }
       }
     }
@@ -1154,6 +1087,73 @@ std::string Storage_Module_Server::ForwardPacketToClients(std::shared_ptr<Stream
     }
   }
 
+  return "";
+}
+
+std::string Storage_Module_Server::SendImageStreamPacketToClients(uint32_t cameraID,
+  std::shared_ptr<StreamPacket> packet, Time subtractTime, Time AddTime)
+{
+  std::shared_ptr<Message> msg;
+  Status status = packet->GetNextMessage(msg);
+  if (status != OKAY) {
+    return "Error getting first message from packet: " + ErrorMessage(status);
+  }
+  while (msg != nullptr) {
+    // Adjust the time on the message as requested.
+    Time time;
+    status = msg->GetTime(time);
+    if (status != OKAY) {
+      return "Error getting time from message: " + ErrorMessage(status);
+    }
+    if (time < subtractTime) {
+      time = Time(0, 0);
+    } else {
+      time -= subtractTime;
+    }
+    time += AddTime;
+
+    // Handle the message by sending it to all endpoints on all clients corresponding to this camera.
+    std::map<ClientState, std::map<StreamEndpoint, ReplayInfo> > myReplayInfo;
+    {
+      std::lock_guard<std::mutex> lock(m_replayMutex);
+      myReplayInfo = m_subregions[cameraID];
+    }
+    for (const auto& clientMapsPair : myReplayInfo) {
+      const ClientState& client = clientMapsPair.first;
+      for (const auto& subregionMapsPair : clientMapsPair.second) {
+        const StreamEndpoint& endpoint = subregionMapsPair.first;
+        const ReplayInfo& info = subregionMapsPair.second;
+
+        /// @todo Filter the packets by client, sending the ones matching the requested time
+        /// and subsetting in space.
+
+        // Copy the message to the client's streamwriter, adjusting its time.
+        std::shared_ptr<StreamPacket> packet;
+        status = info.writer->GetCurrentPacket(packet);
+        if (status != OKAY) {
+          return "Error getting current packet: " + ErrorMessage(status);
+        }
+        status = msg->CopyToStreamPacket(*packet, time);
+        if (status != OKAY) {
+          return "Error adding message to packet: " + ErrorMessage(status);
+        }
+
+        // Send the packet.
+        status = info.writer->Flush();
+        if (status != OKAY) {
+          return "Error flushing StreamWriter: " + ErrorMessage(status) + " (Client may have disconnected)";
+        }
+      }
+    }
+
+    // Get the next message in the packet.
+    status = packet->GetNextMessage(msg);
+    if (status != OKAY) {
+      return "Error getting message from packet: " + ErrorMessage(status);
+    }
+  }
+
+  // No errors.
   return "";
 }
 
@@ -1839,73 +1839,14 @@ void Storage_Module::StreamReceiverThread(std::shared_ptr<ReceiverInfo> receiver
     // this camera.
     if ((status == OKAY) && (m_server->CurrentMode() == Storage_Module_Server::Mode::Live)) {
       uint32_t cameraID = receiver->m_ID;
-      std::shared_ptr<Message> msg;
-      Status status = packet->GetNextMessage(msg);
-      if (status != OKAY) {
+
+      std::string ret = m_server->SendImageStreamPacketToClients(cameraID, packet);
+      if (!ret.empty()) {
         if (m_verbosity >= 0) {
-          std::cerr << "Storage_Module::StreamReceiverThread(): Error getting first message from packet: " << ErrorMessage(status) << std::endl;
-        }
-        break;
-      }
-      while (msg != nullptr) {
-        /// @todo Make this a common function with the replay thread?
-
-        // Handle the message by sending it to all endpoints on all clients corresponding to this camera.
-        std::map<CoreServerBase::ClientState, std::map<StreamEndpoint, Storage_Module_Server::ReplayInfo> > myReplayInfo;
-        {
-          std::lock_guard<std::mutex> lock(m_server->m_replayMutex);
-          myReplayInfo = m_server->m_subregions[cameraID];
-        }
-        for (const auto& clientMapsPair : myReplayInfo) {
-          const CoreServerBase::ClientState& client = clientMapsPair.first;
-          for (const auto& subregionMapsPair : clientMapsPair.second) {
-            const StreamEndpoint& endpoint = subregionMapsPair.first;
-            const Storage_Module_Server::ReplayInfo& info = subregionMapsPair.second;
-
-            /// @todo Filter the packets by client, sending the ones matching the requested time
-            /// and subsetting in space.
-
-            // Copy the message to the client's streamwriter, not adjusting its time.
-            std::shared_ptr<StreamPacket> packet;
-            status = info.writer->GetCurrentPacket(packet);
-            if (status != OKAY) {
-              if (m_verbosity >= 0) {
-                std::cerr << "Storage_Module::StreamReceiverThread(): Error getting current packet: " + ErrorMessage(status);
-              }
-              break;
-            }
-            status = msg->CopyToStreamPacket(*packet);
-            if (status != OKAY) {
-              if (m_verbosity >= 0) {
-                std::cerr << "Storage_Module::StreamReceiverThread(): Error adding message to packet: " + ErrorMessage(status);
-              }
-              break;
-            }
-
-            // Send the packet.
-            status = info.writer->Flush();
-            if (status != OKAY) {
-              if (m_verbosity >= 0) {
-                std::cerr << "Storage_Module::StreamReceiverThread(): Error flushing StreamWriter: "
-                  + ErrorMessage(status)
-                  + " (client may have disconnected)";
-              }
-              break;
-            }
-          }
-        }
-
-        // Get the next message in the packet.
-        status = packet->GetNextMessage(msg);
-        if (status != OKAY) {
-          if (m_verbosity >= 0) {
-            std::cerr << "Storage_Module::StreamReceiverThread(): Error getting message from packet: " << ErrorMessage(status) << std::endl;
-          }
-          break;
+          std::cerr << "Storage_Module::StreamReceiverThread() error sending packet to clients: " << ret << std::endl;
         }
       }
     }
-
   }
 
   // Write the last partial buffer to disk if it has any data in it.  First zero-pad it to an even multiple
