@@ -24,6 +24,9 @@ Storage_Module_Server::Storage_Module_Server(Storage_Module* parent, uint32_t se
   , m_replayPaused(false)
   , m_replayElapsedTime(std::make_shared<ElapsedTimeWithPause>())
 {
+  // Save the state of record on reset.
+  m_recordOnReset = parent->m_persistentState.StoringAtRestart();
+
   // We start out in "live" mode. This changes when replay is started and stopped.
   // This is true even when we don't have a live conncetion to a parent, according to the spec.
   m_camerasStreaming = true;
@@ -804,8 +807,7 @@ void Storage_Module_Server::doStopReplay(const CommandPacketStopReplay& command,
       MessageEvent message2(*packet, nowInIdle, 0, CLOCK_SYNC, "");
       if (message2.GetConstructorStatus() != OKAY) {
         m_error = "Storage_Module_Server::doStopReplay(): Error constructing MessageClockSync: "
-          + ErrorMessage(message.GetConstructorStatus())
-          + " (client may have disconnected)";
+          + ErrorMessage(message.GetConstructorStatus());
         return;
       }
     }
@@ -816,7 +818,7 @@ void Storage_Module_Server::doStopReplay(const CommandPacketStopReplay& command,
       // Client may have disconnected.
       if (m_verbosity >= 0) {
         std::cerr << "Storage_Module_Server::doStopReplay(): Error flushing StreamWriter: "
-          + ErrorMessage(message.GetConstructorStatus())
+          + ErrorMessage(status)
           + " (client may have disconnected)";
       }
     }
@@ -860,6 +862,10 @@ void Storage_Module_Server::ReplayThread(uint32_t cameraID, std::shared_ptr<Rece
 
   // Remove our camera from the timer.
   timer->RemoveCameraQueues(cameraID);
+
+  if (m_verbosity > 4) {
+    std::cout << "    Storage_Module_Server::ReplayThread(): Ending thread for camera " << cameraID << std::endl;
+  }
 }
 
 void Storage_Module_Server::ReplayInputThread(std::shared_ptr<ReceiverFile> receiver,
