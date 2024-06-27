@@ -171,13 +171,18 @@ protected:
   //=============================================================================
   /// Override methods to implement the commands as needed.
 
-  /// @todo Set state period and other base-class ones should also forward to the live server if there is one
+  /// Event verbosity is properly handled in our parent class.
 
+  /// Set state period and other base-class ones should also forward to the live server if there is one
   void doReset(const CommandPacketReset&, ClientState& client) override;
+  void doSetStreamStatePeriod(const CommandPacketSetStreamStatePeriod& command, ClientState& client) override;
+  void doSetNUCFlagState(const CommandPacketSetNUCFlagState& command, ClientState& client) override;
+  void doStartOnCameraNUC(const CommandPacketStartOnCameraNUC& command, ClientState& client) override;
   void doConfigureTrigger(const CommandPacketConfigureTrigger&, ClientState& client) override;
   void doSoftwareTrigger(const CommandPacketSoftwareTrigger&, ClientState& client) override;
   void doStreamSubregion(const CommandPacketStreamSubregion&, ClientState& client) override;
   void doCancelSubregion(const CommandPacketCancelSubregion&, ClientState& client) override;
+
 
   /// Override recording and replay methods.
   void doStartRecording(const CommandPacketStartRecording& command, ClientState& client) override;

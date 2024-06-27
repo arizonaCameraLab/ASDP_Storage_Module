@@ -229,14 +229,39 @@ void Storage_Module_Server::doReset(const CommandPacketReset& command, ClientSta
   m_error = "@todo implement doReset";
 }
 
+void Storage_Module_Server::doSetStreamStatePeriod(const CommandPacketSetStreamStatePeriod& command, ClientState& client)
+{
+  if (CurrentMode() == Storage_Module_Server::Mode::Live) {
+    m_parent->SendCommandPacket(command);
+  }
+}
+
+void Storage_Module_Server::doSetNUCFlagState(const CommandPacketSetNUCFlagState& command, ClientState& client)
+{
+  if (CurrentMode() == Storage_Module_Server::Mode::Live) {
+    m_parent->SendCommandPacket(command);
+  }
+}
+
+void Storage_Module_Server::doStartOnCameraNUC(const CommandPacketStartOnCameraNUC& command, ClientState& client)
+{
+  if (CurrentMode() == Storage_Module_Server::Mode::Live) {
+    m_parent->SendCommandPacket(command);
+  }
+}
+
 void Storage_Module_Server::doConfigureTrigger(const CommandPacketConfigureTrigger& command, ClientState& client)
 {
-  m_error = "@todo implement doConfigureTrigger";
+  if (CurrentMode() == Storage_Module_Server::Mode::Live) {
+    m_parent->SendCommandPacket(command);
+  }
 }
 
 void Storage_Module_Server::doSoftwareTrigger(const CommandPacketSoftwareTrigger& command, ClientState& client)
 {
-  m_error = "@todo implement doSoftwareTrigger";
+  if (CurrentMode() == Storage_Module_Server::Mode::Live) {
+    m_parent->SendCommandPacket(command);
+  }
 }
 
 void Storage_Module_Server::doStreamSubregion(const CommandPacketStreamSubregion& command, ClientState& client)
