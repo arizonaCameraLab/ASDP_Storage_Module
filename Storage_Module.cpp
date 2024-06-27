@@ -226,7 +226,27 @@ void Storage_Module_Server::doEveryLoop()
 
 void Storage_Module_Server::doReset(const CommandPacketReset& command, ClientState& client)
 {
-  m_error = "@todo implement doReset";
+  // Close all client connections
+  m_clients.clear();
+
+  // Stop storing and then re-start it if we're supposed to record on reset.
+  m_parent->StopStoring();
+  if (m_parent->m_persistentState.StoringAtRestart()) {
+    m_parent->StartStoring();
+  }
+
+  // Reset our clock to count up from zero starting now.
+  Time now;
+  Status status = m_timer->GetCoreTime(now);
+  if (status != OKAY) {
+    m_error = "doReset(): Error getting time: " + ErrorMessage(status);
+    return;
+  }
+  status = m_timer->SetCoreNegativeOffset(now);
+  if (status != OKAY) {
+    m_error = "doReset(): Error setting negative offset: " + ErrorMessage(status);
+    return;
+  }
 }
 
 void Storage_Module_Server::doSetStreamStatePeriod(const CommandPacketSetStreamStatePeriod& command, ClientState& client)
@@ -945,7 +965,7 @@ Status Storage_Module_Server::SendModifiedStateMessage(std::shared_ptr<MessageSt
   uint8_t camerasStreaming = m_camerasStreaming;
   uint8_t replaying = m_replaying;
   uint8_t replayAtEnd = m_replayAtEnd;
-  uint8_t recordOnReset = m_recordOnReset;
+  uint8_t recordOnReset = m_parent->m_persistentState.StoringAtRestart();
   uint64_t totalDiskSpace = m_totalDiskSpace;
   uint64_t remainingDiskSpace = m_remainingDiskSpace;
   Time streamReplayTime = m_streamReplayTime;
