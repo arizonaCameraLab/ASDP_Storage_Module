@@ -342,9 +342,6 @@ protected:
   //=============================================================================
   // Thread management.
 
-  /// @todo Consider the need for mutexes to protect the data structures when we
-  /// view or modify them in the m_servers or in the StreamReceiverThreads.
-
   /// Set to true to stop all threads.
   std::atomic<bool> m_stop;
 
@@ -360,6 +357,8 @@ protected:
 
   /// One server per serial number found in the storage root directory.
   /// When we connect a client, we will also ensure that the server for that serial number is running.
+  /// This is only adjusted in the constuctor before starting the client thread and then in the client thread,
+  /// so we do not need to protect it with a mutex.
   std::vector< std::shared_ptr<ServerInfo> > m_servers;
 
   /// Server threads
@@ -399,6 +398,9 @@ protected:
   void StreamReceiverThread(std::shared_ptr<ReceiverInfo> receiver);
 
   /// The server associated with the current client.
+  /// This is set in the client thread and not destroyed until all using threads are done and
+  /// the server is mutexing the things that are needed to make calls thread safe, so we should not
+  /// need to protect it with a mutex.
   std::shared_ptr<Storage_Module_Server> m_server;
 
   /// @brief Construct a new server thread based on the one we are connected to.
@@ -420,13 +422,6 @@ protected:
 
   /// Used to determine the port to listen on so that each is different.  Decrement to get the next port.
   std::atomic<uint16_t> m_nextPort;
-
-  //=============================================================================
-  // Override methods to handle commands from the Core Module by forwarding them to the live server
-  // or to the appropriate server based on the serial number.
-
-  /// @todo Forward start/stop streaming subregions.  This will override our default of streaming all.
-  /// @todo Other methods
 
   friend class Storage_Module_Server;
 };

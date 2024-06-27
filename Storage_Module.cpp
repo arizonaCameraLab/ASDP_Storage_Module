@@ -584,7 +584,7 @@ void Storage_Module_Server::doStartReplay(const CommandPacketStartReplay& comman
     return;
   }
   if (CurrentMode() == Storage_Module_Server::Mode::Live) {
-    /// @todo Figure out how to get the time in that mode.
+    m_parent->m_timer->GetCoreTime(nowInLive);
   }
 
   // Inform the client that we are replaying by sending a START_OF_REPLAY message
