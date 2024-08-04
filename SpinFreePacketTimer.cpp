@@ -2,8 +2,6 @@
  * Copyright (C) 2024: Arizona Board of Regents on Behalf of the University of Arizona
  */
 
-#pragma once
-
 #include "SpinFreePacketTimer.h"
 
 using namespace asdp;
