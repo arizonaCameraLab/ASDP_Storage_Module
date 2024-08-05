@@ -1787,14 +1787,14 @@ static void WriteBuffersToFile(asdp::SpinFreeQueue<WriteBufferInfo>& writeQueue,
 {
   while (!stop) {
     // We need this to be destroyed every time through the loop so we release its shared pointer,
-    // which will ause the SenderFile to be deleted if it is the last reference to it.
+    // which will cause the SenderFile to be deleted if it is the last reference to it.
     WriteBufferInfo info;
     if (writeQueue.dequeue(info, std::chrono::milliseconds(100))) {
       info.sender->Send(info.buffer->data(), info.bytesToWrite);
     }
   }
 
-  // Drain the queue before we exit.
+  // Drain the queue before we return.
   while (writeQueue.size()) {
     WriteBufferInfo info;
     writeQueue.dequeue(info, std::chrono::milliseconds(100));
