@@ -1603,7 +1603,7 @@ Status Storage_Module::StartStoring()
     if (m_storageSenders[i]->GetConstructorStatus() != OKAY) {
       if (m_verbosity >= 0) {
         std::cerr << "Storage_Module::Failed to open storage file for camera " + std::to_string(i) << " stream: "
-          << ErrorMessage(m_storageSenders[0]->GetConstructorStatus()) << std::endl;
+          << ErrorMessage(m_storageSenders[i]->GetConstructorStatus()) << std::endl;
         std::cerr << "  File name: " << fileName << std::endl;
       }
       return FILE_FAILURE;
