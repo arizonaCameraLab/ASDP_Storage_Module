@@ -580,8 +580,11 @@ void Storage_Module_Server::doStartReplay(const CommandPacketStartReplay& comman
   std::string fileName = m_parent->m_storageRoot + "/" + std::to_string(m_serial) + "/" + std::to_string(streamID) + "/stream0.dat";
   m_replayFiles[0] = std::make_shared<ReceiverFile>(fileName);
 
-  // Construct the spin-free packet timer that will be used to send packets to the cameras.
-  m_replayPacketTimer = std::make_shared<SpinFreePacketTimer>(m_replayElapsedTime);
+  // Construct the spin-free packet timers that will be used to send packets to the cameras.
+  // We make five of them and round-robin the cameras onto them so that each handles at most 5 cameras.
+  for (uint32_t i = 0; i < 5; i++) {
+    m_replayPacketTimers.push_back(std::make_shared<SpinFreePacketTimer>(m_replayElapsedTime));
+  }
 
   // Open the camera stream files for each stream ID and start the stream receiver threads.
   m_stopReplayThreads = false;
@@ -589,7 +592,8 @@ void Storage_Module_Server::doStartReplay(const CommandPacketStartReplay& comman
   for (uint32_t i = 1; i <= cameras.size(); i++) {
     std::string fileName = m_parent->m_storageRoot + "/" + std::to_string(m_serial) + "/" + std::to_string(streamID) + "/stream" + std::to_string(i) + ".dat";
     m_replayFiles[i] = std::make_shared<ReceiverFile>(fileName);
-    m_replayThreads[i] = std::thread(&Storage_Module_Server::ReplayThread, this, i, m_replayFiles[i], m_replayPacketTimer);
+    m_replayThreads[i] = std::thread(&Storage_Module_Server::ReplayThread, this, i, m_replayFiles[i],
+      m_replayPacketTimers[i % m_replayPacketTimers.size()]);
   }
 
   // Switching away from live mode and not paused.
@@ -763,7 +767,7 @@ void Storage_Module_Server::doStopReplay(const CommandPacketStopReplay& command,
   m_replayThreads.clear();
 
   // Stop the spin-free packet timer.
-  m_replayPacketTimer.reset();
+  m_replayPacketTimers.clear();
 
   // Stop all of our stream receivers.
   m_replayFiles.clear();

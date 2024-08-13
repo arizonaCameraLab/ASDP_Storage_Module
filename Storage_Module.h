@@ -126,8 +126,10 @@ protected:
   std::shared_ptr<StreamPacket> m_replayPacket;
   Time m_replayPacketTime;          ///< The time of the next packet we are currently waiting to replay.
 
-  /// Spin-free packet timer for replaying packets at the correct time to each camera.
-  std::shared_ptr<asdp::SpinFreePacketTimer> m_replayPacketTimer;
+  /// Spin-free packet timers for replaying packets at the correct time to each camera.
+  /// We need more than one of these because it becomes a bottleneck
+  std::vector< std::shared_ptr<asdp::SpinFreePacketTimer>>  m_replayPacketTimers;
+
   /// Tells the replay per-camera streams to stop.
   std::atomic_bool m_stopReplayThreads;
   /// Replay threads for each camera.
