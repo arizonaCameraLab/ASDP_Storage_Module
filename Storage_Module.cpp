@@ -594,7 +594,7 @@ void Storage_Module_Server::doStartReplay(const CommandPacketStartReplay& comman
     std::string fileName = m_parent->m_storageRoot + "/" + std::to_string(m_serial) + "/" + std::to_string(streamID) + "/stream" + std::to_string(i) + ".dat";
     m_replayFiles[i] = std::make_shared<ReceiverFile>(fileName);
     m_replayThreads[i] = std::thread(&Storage_Module_Server::ReplayThread, this, i, m_replayFiles[i],
-      m_replayPacketTimers[i % m_replayPacketTimers.size()]);
+      m_replayPacketTimers[(i-1) % m_replayPacketTimers.size()]);
   }
 
   // Switching away from live mode and not paused.
