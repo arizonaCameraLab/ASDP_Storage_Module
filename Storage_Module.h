@@ -157,7 +157,7 @@ protected:
 
   /// Structure to hold the information needed to replay to a single camera.
   struct ReplayInfo {
-    SubregionDescription subregion;  ///< The subregion to replay to.
+    SubregionDescription subregion = {};  ///< The subregion to replay to.
     std::shared_ptr<StreamWriter> writer;  ///< The writer to write packets using.
   };
   /// Map from camera ID to a map from client to a map from endpoint to subregion description.
