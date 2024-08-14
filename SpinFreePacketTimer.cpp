@@ -8,6 +8,7 @@ using namespace asdp;
 
 SpinFreePacketTimer::SpinFreePacketTimer(std::shared_ptr<asdp::ElapsedTimeWithPause> timer)
   : m_elapsedTimer(timer)
+  , m_done(false)
 {
   // Spin up the thread.
   m_thread = std::thread(&SpinFreePacketTimer::WatchThread, this);

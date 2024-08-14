@@ -44,7 +44,7 @@ namespace asdp {
     /// @brief Structure holiding a packet and the time it is ready to send.
     struct PacketTime {
       std::shared_ptr<asdp::StreamPacket> packet; ///< The packet.
-      double elapsedTime = 0; ///< The time the packet is ready to send since stream start.
+      double elapsedTime = 0.0; ///< The time the packet is ready to send since stream start.
     };
 
     /// @brief Define the input and output queues for a camera, overwriting any existing entry.

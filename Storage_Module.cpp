@@ -22,6 +22,7 @@ Storage_Module_Server::Storage_Module_Server(Storage_Module* parent, uint32_t se
   : CoreServerBase(serialNumber, NicName, sendPort, listenPort, maxPayloadSize, verbosity)
   , m_parent(parent)
   , m_replayPaused(false)
+  , m_stopReplayThreads(false)
   , m_replayElapsedTime(std::make_shared<ElapsedTimeWithPause>())
 {
   // Save the state of record on reset.
