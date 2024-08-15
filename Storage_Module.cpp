@@ -929,6 +929,13 @@ void Storage_Module_Server::ReplayInputThread(std::shared_ptr<ReceiverFile> rece
       inputQueue->enqueue(packetTime);
     }
   }
+
+  // Remove all of the entries from the queue so that we don't leave any buffers in the pool.
+  // This allows the bufferPool object to be destroyed and free all of the memory.
+  while (inputQueue->size()) {
+    std::shared_ptr<asdp::SpinFreePacketTimer::PacketTime> packetTime;
+    inputQueue->dequeue(packetTime, std::chrono::milliseconds(100));
+  }
 }
 
 Storage_Module_Server::Mode Storage_Module_Server::CurrentMode() const
