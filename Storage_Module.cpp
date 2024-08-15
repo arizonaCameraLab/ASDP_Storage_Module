@@ -538,6 +538,9 @@ void Storage_Module_Server::doStartReplay(const CommandPacketStartReplay& comman
   // will use to offset message times.  Then continue to read messages until we get a status message and use it
   // to set the initial state of the server.
   std::string error = ReadInitialTimeAndState(streamID, m_stateMessage);
+  if (m_stateMessage != nullptr) {
+    ConfigureStateFromStoredState();
+  }
   if (!error.empty()) {
     if (m_verbosity >= 0) {
       std::cerr << "Storage_Module_Server::doStartReplay(): " + error << std::endl;
@@ -545,9 +548,6 @@ void Storage_Module_Server::doStartReplay(const CommandPacketStartReplay& comman
     // Ignore the error and return.  We will not be able to replay without the file.
     m_replayFiles.clear();
     return;
-  }
-  if (m_stateMessage != nullptr) {
-    ConfigureStateFromStoredState();
   }
   if (m_verbosity > 1) {
     std::cout << " Storage_Module_Server::Opened replay file for stream: " << streamID << std::endl;
