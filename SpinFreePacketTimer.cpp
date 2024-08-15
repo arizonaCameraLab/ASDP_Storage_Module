@@ -57,6 +57,12 @@ void SpinFreePacketTimer::WatchThread()
       cameraKeys = m_cameraKeys;
     }
 
+    // If all cameras have been removed, clear the cache -- we're shutting down and need to
+    // free up resources.
+    if (cameraKeys.size() == 0) {
+      cameraPacketTimes.clear();
+    }
+
     // For each camera, check the cached entry. If there is not one, try and get one from the input queue.
     // If it is time to send the packet, push it onto the output queue.
     for (uint32_t cameraId : cameraKeys) {

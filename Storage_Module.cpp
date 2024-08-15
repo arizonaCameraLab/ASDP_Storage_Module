@@ -862,11 +862,18 @@ void Storage_Module_Server::ReplayThread(uint32_t cameraID, std::shared_ptr<Rece
     }
   }
 
+  // Remove our camera from the timer, which will remove any cache entry as well once all
+  // threads have removed them.
+  timer->RemoveCameraQueues(cameraID);
+
+  // Clear our output queue, which will remove any shared pointers and free up their buffers.
+  while (outputQueue->size()) {
+    std::shared_ptr<StreamPacket> packet;
+    outputQueue->dequeue(packet, std::chrono::milliseconds(100));
+  }
+
   // Wait for the input thread to finish.
   inputThread.join();
-
-  // Remove our camera from the timer.
-  timer->RemoveCameraQueues(cameraID);
 
   if (m_verbosity > 4) {
     std::cout << "    Storage_Module_Server::ReplayThread(): Ending thread for camera " << cameraID << std::endl;
