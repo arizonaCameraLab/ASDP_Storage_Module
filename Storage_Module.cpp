@@ -853,6 +853,7 @@ void Storage_Module_Server::ReplayThread(uint32_t cameraID, std::shared_ptr<Rece
   while (!m_stopReplayThreads) {
     std::shared_ptr<StreamPacket> packet;
     if (outputQueue->dequeue(packet, std::chrono::milliseconds(100))) {
+      /// @todo Handle skipping packets when there is a specified stride, and don't start sending until the first message is in the past.'
       std::string ret = SendImageStreamPacketToClients(cameraID, packet, m_replayFirstTime, m_replayInitialTime);
       if (!ret.empty()) {
         if (m_verbosity >= 0) {
@@ -1169,63 +1170,39 @@ std::string Storage_Module_Server::ForwardPacketToClients(std::shared_ptr<Stream
 std::string Storage_Module_Server::SendImageStreamPacketToClients(uint32_t cameraID,
   std::shared_ptr<StreamPacket> packet, Time subtractTime, Time AddTime)
 {
-  std::shared_ptr<Message> msg;
-  Status status = packet->GetNextMessage(msg);
-  if (status != OKAY) {
-    return "Error getting first message from packet: " + ErrorMessage(status);
+  // Find the total offset time for the replay in fractional seconds.
+  double offsetTime;
+  if (AddTime >= subtractTime) {
+    Time delta = AddTime - subtractTime;
+    offsetTime = delta.seconds + (delta.microseconds / 1e6);
+  } else {
+    Time delta = subtractTime - AddTime;
+    offsetTime = -(delta.seconds + (delta.microseconds / 1e6));
   }
-  while (msg != nullptr) {
-    // Adjust the time on the message as requested.
-    Time time;
-    status = msg->GetTime(time);
-    if (status != OKAY) {
-      return "Error getting time from message: " + ErrorMessage(status);
-    }
-    if (time < subtractTime) {
-      time = Time(0, 0);
-    } else {
-      time -= subtractTime;
-    }
-    time += AddTime;
 
-    // Handle the message by sending it to all endpoints on all clients corresponding to this camera.
-    std::map<ClientState, std::map<StreamEndpoint, ReplayInfo> > myReplayInfo;
-    {
-      std::shared_lock<std::shared_mutex> lock(m_replayMutex);
-      myReplayInfo = m_subregions[cameraID];
-    }
-    for (const auto& clientMapsPair : myReplayInfo) {
-      const ClientState& client = clientMapsPair.first;
-      for (const auto& subregionMapsPair : clientMapsPair.second) {
-        const StreamEndpoint& endpoint = subregionMapsPair.first;
-        const ReplayInfo& info = subregionMapsPair.second;
+  // Offset the time of all messages in the packet by the offset time.
+  Status status = packet->OffsetMessageTimes(offsetTime);
+  if (status != OKAY) {
+    return "Error offsetting message times: " + ErrorMessage(status);
+  }
 
-        /// @todo Filter the packets by client, sending the ones matching the requested time
-        /// and subsetting in space.
+  // Insert the message into the stream for all endpoints on each client for this camera.
+  std::map<ClientState, std::map<StreamEndpoint, ReplayInfo> > myReplayInfo;
+  {
+    std::shared_lock<std::shared_mutex> lock(m_replayMutex);
+    myReplayInfo = m_subregions[cameraID];
+  }
+  for (const auto& clientMapsPair : myReplayInfo) {
+    const ClientState& client = clientMapsPair.first;
+    for (const auto& subregionMapsPair : clientMapsPair.second) {
+      const StreamEndpoint& endpoint = subregionMapsPair.first;
+      const ReplayInfo& info = subregionMapsPair.second;
 
-        // Copy the message to the client's streamwriter, adjusting its time.
-        std::shared_ptr<StreamPacket> packet;
-        status = info.writer->GetCurrentPacket(packet);
-        if (status != OKAY) {
-          return "Error getting current packet: " + ErrorMessage(status);
-        }
-        status = msg->CopyToStreamPacket(*packet, time);
-        if (status != OKAY) {
-          return "Error adding message to packet: " + ErrorMessage(status);
-        }
-
-        // Send the packet.
-        status = info.writer->Flush();
-        if (status != OKAY) {
-          return "Error flushing StreamWriter: " + ErrorMessage(status) + " (Client may have disconnected)";
-        }
+      // Send the packet.
+      status = info.writer->InsertPacket(*packet);
+      if (status != OKAY) {
+        return "Error sending packet: " + ErrorMessage(status) + " (Client may have disconnected)";
       }
-    }
-
-    // Get the next message in the packet.
-    status = packet->GetNextMessage(msg);
-    if (status != OKAY) {
-      return "Error getting message from packet: " + ErrorMessage(status);
     }
   }
 
