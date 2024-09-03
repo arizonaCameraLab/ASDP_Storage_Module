@@ -17,6 +17,7 @@
 #include <ASDP_Core_API.h>
 #include <map>
 #include <mutex>
+#include <shared_mutex>
 #include <list>
 #include <atomic>
 
@@ -120,7 +121,7 @@ protected:
   std::shared_ptr<asdp::ElapsedTimeWithPause> m_replayElapsedTime;  ///< The elapsed time of the replay.
   /// The files we are replaying from. The 0th is the main stream and the rest are image streams.
   std::vector< std::shared_ptr<ReceiverFile> > m_replayFiles;
-  std::mutex m_replayMutex;         ///< Mutex to protect the replay state.
+  std::shared_mutex m_replayMutex;         ///< Mutex to protect the replay state, including read and write locks.
   /// The next packet we are currently waiting to replay, which may be in the future. We use this
   /// to look ahead one packet to see if we should pause.
   std::shared_ptr<StreamPacket> m_replayPacket;

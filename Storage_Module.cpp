@@ -139,7 +139,7 @@ void Storage_Module_Server::clientBeingRemoved(ClientState& client)
 {
   // Remove any subregions that this client has set up on any of the cameras.
   {
-    std::lock_guard<std::mutex> lock(m_replayMutex);
+    std::unique_lock<std::shared_mutex> lock(m_replayMutex);
     for (const auto& pair : m_subregions) {
       m_subregions[pair.first].clear();
     }
@@ -165,7 +165,7 @@ void Storage_Module_Server::doEveryLoop()
     // First update the time code that we should be playing through in a thread-safe way so that
     // all of the image-streaming threads can also make use of it.
     {
-      std::lock_guard<std::mutex> lock(m_replayMutex);
+      std::shared_lock<std::shared_mutex> lock(m_replayMutex);
       m_streamReplayTime = m_replayFirstTime + m_replayElapsedTime->ElapsedTime();
     }
 
@@ -314,7 +314,7 @@ void Storage_Module_Server::doStreamSubregion(const CommandPacketStreamSubregion
   ReplayInfo info;
   info.subregion = subregion;
   info.writer = writer;
-  std::lock_guard<std::mutex> lock(m_replayMutex);
+  std::unique_lock<std::shared_mutex> lock(m_replayMutex);
   m_subregions[subregion.cameraID][client][endpoint] = info;
 }
 
@@ -335,7 +335,7 @@ void Storage_Module_Server::doCancelSubregion(const CommandPacketCancelSubregion
   }
 
   // Remove any entry, locking the mutex while doing so.  If there is not an entry, ignore that fact.
-  std::lock_guard<std::mutex> lock(m_replayMutex);
+  std::unique_lock<std::shared_mutex> lock(m_replayMutex);
   m_subregions[cameraID][client].erase(endpoint);
 }
 
@@ -519,7 +519,7 @@ void Storage_Module_Server::doStartReplay(const CommandPacketStartReplay& comman
     doStopReplay(CommandPacketStopReplay(), client);
   }
 
-  std::lock_guard<std::mutex> lock(m_replayMutex);
+  std::unique_lock<std::shared_mutex> lock(m_replayMutex);
 
   // Parse the command packet to get the stream ID to replay and time offset.
   uint32_t streamID;
@@ -764,7 +764,7 @@ void Storage_Module_Server::doStopReplay(const CommandPacketStopReplay& command,
   }
 
   // Wait to grab the lock until all threads have stopped because they may be using the mutex.
-  std::lock_guard<std::mutex> lock(m_replayMutex);
+  std::unique_lock<std::shared_mutex> lock(m_replayMutex);
   m_replayThreads.clear();
 
   // Stop the spin-free packet timer.
@@ -1191,7 +1191,7 @@ std::string Storage_Module_Server::SendImageStreamPacketToClients(uint32_t camer
     // Handle the message by sending it to all endpoints on all clients corresponding to this camera.
     std::map<ClientState, std::map<StreamEndpoint, ReplayInfo> > myReplayInfo;
     {
-      std::lock_guard<std::mutex> lock(m_replayMutex);
+      std::shared_lock<std::shared_mutex> lock(m_replayMutex);
       myReplayInfo = m_subregions[cameraID];
     }
     for (const auto& clientMapsPair : myReplayInfo) {
