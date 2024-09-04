@@ -870,13 +870,14 @@ void Storage_Module_Server::ReplayInputThread(std::shared_ptr<ReceiverFile> rece
 {
   // Make a pool of packets to use for receiving messages.  When the packet's destructor is called, it
   // will return the memory to the pool.  This speeds up reading because we don't need to allocate a new
-  // buffer in the ReceiveStreamPacket() call.  Start with ten packets in the pool.  More will be allocated
+  // buffer in the ReceiveStreamPacket() call.  Start with some packets in the pool.  More will be allocated
   // if needed.
-  asdp::BufferPool bufferPool(m_parent->m_persistentState.TotalBufferSize(), 10);
+  uint32_t numPrefetch = 100;
+  asdp::BufferPool bufferPool(m_parent->m_persistentState.TotalBufferSize(), numPrefetch);
 
   // Receive packets from the receiver (disk) and queue them until the queue has enough entries.
   while (!m_stopReplayThreads) {
-    if (inputQueue->awaitEmpty(5, std::chrono::milliseconds(100))) {
+    if (inputQueue->awaitEmpty(numPrefetch, std::chrono::milliseconds(100))) {
 
       std::shared_ptr<PacketTime> packetTime(new PacketTime);
       size_t offset = 0;
