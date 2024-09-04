@@ -29,14 +29,14 @@ void SpinFreePacketTimer::DefineCameraQueues(uint32_t cameraId,
   cameraQueues.inputQueue = inputQueue;
   cameraQueues.outputQueue = outputQueue;
 
-  std::lock_guard<std::mutex> lock(m_mutex);
+  std::unique_lock<std::shared_mutex> lock(m_mutex);
   m_cameraQueues[cameraId] = cameraQueues;
   m_cameraKeys.insert(cameraId);
 }
 
 void SpinFreePacketTimer::RemoveCameraQueues(uint32_t cameraId)
 {
-  std::lock_guard<std::mutex> lock(m_mutex);
+  std::unique_lock<std::shared_mutex> lock(m_mutex);
   m_cameraQueues.erase(cameraId);
   m_cameraKeys.erase(cameraId);
 }
@@ -53,7 +53,7 @@ void SpinFreePacketTimer::WatchThread()
     // Get the current set of camera keys, holding the lock for as short a time as possible.
     std::set<uint32_t> cameraKeys;
     {
-      std::lock_guard<std::mutex> lock(m_mutex);
+      std::shared_lock<std::shared_mutex> lock(m_mutex);
       cameraKeys = m_cameraKeys;
     }
 
@@ -72,7 +72,6 @@ void SpinFreePacketTimer::WatchThread()
 
       // If there is no cached packet time, try to get one from the input queue.
       if (!packetTime) {
-        std::lock_guard<std::mutex> lock(m_mutex);
         std::shared_ptr< SpinFreeQueue< std::shared_ptr<PacketTime> > > inputQueue = m_cameraQueues[cameraId].inputQueue;
         if (inputQueue) {
           if (inputQueue->dequeue(packetTime, std::chrono::milliseconds(0))) {
@@ -84,7 +83,6 @@ void SpinFreePacketTimer::WatchThread()
       // If there is a cached packet time, check if it is time to send the packet.
       if (packetTime) {
         if (packetTime->elapsedTime <= m_elapsedTimer->ElapsedTime()) {
-          std::lock_guard<std::mutex> lock(m_mutex);
           // Push the packet onto the output queue.
           std::shared_ptr< SpinFreeQueue< std::shared_ptr<asdp::StreamPacket> > > outputQueue =
             m_cameraQueues[cameraId].outputQueue;

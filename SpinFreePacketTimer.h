@@ -19,7 +19,7 @@
 #include <set>
 #include <cstdint>
 #include <thread>
-#include <mutex>
+#include <shared_mutex>
 #include <atomic>
 #include <ASDP_SpinFreeQueue.hpp>
 #include <ASDP_Core_API.h>
@@ -85,7 +85,7 @@ namespace asdp {
     void WatchThread();
 
     /// @brief Mutex to protect the camera queues.
-    std::mutex m_mutex;
+    std::shared_mutex m_mutex;
 
     /// @brief Flag to indicate the watch thread should stop.
     std::atomic_bool m_done;
