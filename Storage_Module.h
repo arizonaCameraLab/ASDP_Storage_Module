@@ -13,8 +13,8 @@
  */
 
 #include "ElapsedTimeWithPause.h"
-#include "SpinFreePacketTimer.h"
 #include <ASDP_Core_API.h>
+#include <ASDP_SpinFreeQueue.hpp>
 #include <map>
 #include <mutex>
 #include <shared_mutex>
@@ -127,9 +127,11 @@ protected:
   std::shared_ptr<StreamPacket> m_replayPacket;
   Time m_replayPacketTime;          ///< The time of the next packet we are currently waiting to replay.
 
-  /// Spin-free packet timers for replaying packets at the correct time to each camera.
-  /// We need more than one of these because it becomes a bottleneck
-  std::vector< std::shared_ptr<asdp::SpinFreePacketTimer>>  m_replayPacketTimers;
+  /// @brief Structure holiding a packet and the time it is ready to send.
+  struct PacketTime {
+    std::shared_ptr<asdp::StreamPacket> packet; ///< The packet.
+    double elapsedTime = 0.0; ///< The time the packet is ready to send since stream start.
+  };
 
   /// Tells the replay per-camera streams to stop.
   std::atomic_bool m_stopReplayThreads;
@@ -139,13 +141,13 @@ protected:
   /// @param cameraID The ID of the camera to replay.
   /// @param inFile The file to read packets from.
   /// @param timer The timer to use to replay packets at the correct time.
-  void ReplayThread(uint32_t cameraID, std::shared_ptr<ReceiverFile> receiver,
-    std::shared_ptr<asdp::SpinFreePacketTimer> timer);
+  void ReplayThread(uint32_t cameraID, std::shared_ptr<ReceiverFile> receiver);
+
   /// @brief Body of a thread that reads packets from disk and queues them for a single camera.
   /// @param receiver The file to read packets from.
   /// @param inputQueue The queue to send packets to.
   void ReplayInputThread(std::shared_ptr<ReceiverFile> receiver,
-    std::shared_ptr< SpinFreeQueue< std::shared_ptr<asdp::SpinFreePacketTimer::PacketTime> > > inputQueue);
+    std::shared_ptr< SpinFreeQueue< std::shared_ptr<PacketTime> > > inputQueue);
 
   /// @brief Send all messages from the image packet to relevant clients.
   /// @param cameraID The ID of the camera the packet is streaming from.

@@ -581,20 +581,13 @@ void Storage_Module_Server::doStartReplay(const CommandPacketStartReplay& comman
   std::string fileName = m_parent->m_storageRoot + "/" + std::to_string(m_serial) + "/" + std::to_string(streamID) + "/stream0.dat";
   m_replayFiles[0] = std::make_shared<ReceiverFile>(fileName);
 
-  // Construct the spin-free packet timers that will be used to send packets to the cameras.
-  // We make five of them and round-robin the cameras onto them so that each handles at most 5 cameras.
-  for (uint32_t i = 0; i < 5; i++) {
-    m_replayPacketTimers.push_back(std::make_shared<SpinFreePacketTimer>(m_replayElapsedTime));
-  }
-
   // Open the camera stream files for each stream ID and start the stream receiver threads.
   m_stopReplayThreads = false;
   m_replayThreads.resize(cameras.size() + 1);
   for (uint32_t i = 1; i <= cameras.size(); i++) {
     std::string fileName = m_parent->m_storageRoot + "/" + std::to_string(m_serial) + "/" + std::to_string(streamID) + "/stream" + std::to_string(i) + ".dat";
     m_replayFiles[i] = std::make_shared<ReceiverFile>(fileName);
-    m_replayThreads[i] = std::thread(&Storage_Module_Server::ReplayThread, this, i, m_replayFiles[i],
-      m_replayPacketTimers[(i-1) % m_replayPacketTimers.size()]);
+    m_replayThreads[i] = std::thread(&Storage_Module_Server::ReplayThread, this, i, m_replayFiles[i]);
   }
 
   // Switching away from live mode and not paused.
@@ -767,9 +760,6 @@ void Storage_Module_Server::doStopReplay(const CommandPacketStopReplay& command,
   std::unique_lock<std::shared_mutex> lock(m_replayMutex);
   m_replayThreads.clear();
 
-  // Stop the spin-free packet timer.
-  m_replayPacketTimers.clear();
-
   // Stop all of our stream receivers.
   m_replayFiles.clear();
 
@@ -830,48 +820,42 @@ void Storage_Module_Server::doStopReplay(const CommandPacketStopReplay& command,
   }
 }
 
-void Storage_Module_Server::ReplayThread(uint32_t cameraID, std::shared_ptr<ReceiverFile> receiver,
-  std::shared_ptr<asdp::SpinFreePacketTimer> timer)
+void Storage_Module_Server::ReplayThread(uint32_t cameraID, std::shared_ptr<ReceiverFile> receiver)
 {
   if (m_verbosity > 4) {
     std::cout << "    Storage_Module_Server::ReplayThread(): Starting thread for camera " << cameraID << std::endl;
   }
 
-  // Construct the input and output queues for the thread.
-  std::shared_ptr< SpinFreeQueue< std::shared_ptr<asdp::SpinFreePacketTimer::PacketTime> > >
-    inputQueue(new SpinFreeQueue< std::shared_ptr<asdp::SpinFreePacketTimer::PacketTime> >());
-  std::shared_ptr< SpinFreeQueue< std::shared_ptr<StreamPacket> > >
-    outputQueue(new SpinFreeQueue< std::shared_ptr<StreamPacket> >());
-
-  // Add an entry to the timer for this camera.
-  timer->DefineCameraQueues(cameraID, inputQueue, outputQueue);
+  // Construct the queue to receive packets from the input thread.
+  std::shared_ptr< SpinFreeQueue< std::shared_ptr<PacketTime> > >
+    inputQueue(new SpinFreeQueue< std::shared_ptr<PacketTime> >());
 
   // Start the input thread
   std::thread inputThread(&Storage_Module_Server::ReplayInputThread, this, receiver, inputQueue);
 
-  // While we're not done, get packets from the output queue and send their messages to the clients.
+  // While we're not done, get packets from the imput thread and send their messages to the clients when their
+  // time has arrived.
+  std::shared_ptr<PacketTime> packetTime;
   while (!m_stopReplayThreads) {
-    std::shared_ptr<StreamPacket> packet;
-    if (outputQueue->dequeue(packet, std::chrono::milliseconds(100))) {
+    // If we have no cached packet, get one from the input queue if it is available
+    if (!packetTime) {
+      if (!inputQueue->dequeue(packetTime, std::chrono::milliseconds(10))) {
+        continue;
+      }
+    }
+
+    if (packetTime && packetTime->elapsedTime <= m_replayElapsedTime->ElapsedTime()) {
       /// @todo Handle skipping packets when there is a specified stride, and don't start sending until the first message is in the past.'
-      std::string ret = SendImageStreamPacketToClients(cameraID, packet, m_replayFirstTime, m_replayInitialTime);
+      std::string ret = SendImageStreamPacketToClients(cameraID, packetTime->packet, m_replayFirstTime, m_replayInitialTime);
       if (!ret.empty()) {
         if (m_verbosity >= 0) {
           std::cerr << "Storage_Module_Server::ReplayThread(): Error sending stream packet: " + ret << std::endl;
         }
       }
+      packetTime.reset();
     }
   }
-
-  // Remove our camera from the timer, which will remove any cache entry as well once all
-  // threads have removed them.
-  timer->RemoveCameraQueues(cameraID);
-
-  // Clear our output queue, which will remove any shared pointers and free up their buffers.
-  while (outputQueue->size()) {
-    std::shared_ptr<StreamPacket> packet;
-    outputQueue->dequeue(packet, std::chrono::milliseconds(100));
-  }
+  packetTime.reset();
 
   // Wait for the input thread to finish.
   inputThread.join();
@@ -882,7 +866,7 @@ void Storage_Module_Server::ReplayThread(uint32_t cameraID, std::shared_ptr<Rece
 }
 
 void Storage_Module_Server::ReplayInputThread(std::shared_ptr<ReceiverFile> receiver,
-  std::shared_ptr< SpinFreeQueue< std::shared_ptr<asdp::SpinFreePacketTimer::PacketTime> > > inputQueue)
+  std::shared_ptr< SpinFreeQueue< std::shared_ptr<PacketTime> > > inputQueue)
 {
   // Make a pool of packets to use for receiving messages.  When the packet's destructor is called, it
   // will return the memory to the pool.  This speeds up reading because we don't need to allocate a new
@@ -894,7 +878,7 @@ void Storage_Module_Server::ReplayInputThread(std::shared_ptr<ReceiverFile> rece
   while (!m_stopReplayThreads) {
     if (inputQueue->awaitEmpty(5, std::chrono::milliseconds(100))) {
 
-      std::shared_ptr<asdp::SpinFreePacketTimer::PacketTime> packetTime(new asdp::SpinFreePacketTimer::PacketTime);
+      std::shared_ptr<PacketTime> packetTime(new PacketTime);
       size_t offset = 0;
       Status status = receiver->ReceiveStreamPacket(0.0, packetTime->packet, offset, bufferPool.GetBuffer());
       if (status == TIMEOUT) {
@@ -941,7 +925,7 @@ void Storage_Module_Server::ReplayInputThread(std::shared_ptr<ReceiverFile> rece
   // Remove all of the entries from the queue so that we don't leave any buffers in the pool.
   // This allows the bufferPool object to be destroyed and free all of the memory.
   while (inputQueue->size()) {
-    std::shared_ptr<asdp::SpinFreePacketTimer::PacketTime> packetTime;
+    std::shared_ptr<PacketTime> packetTime;
     inputQueue->dequeue(packetTime, std::chrono::milliseconds(100));
   }
 }
