@@ -757,7 +757,7 @@ void Storage_Module_Server::doStopReplay(const CommandPacketStopReplay& command,
   // Stop all of our per-camera receive threads.
   m_stopReplayThreads = true;
   for (auto& thread : m_replayThreads) {
-    // The zeroeth thread will not be joinable because it is no started; the main thread handles it.
+    // The zeroeth thread will not be joinable because it is not started; the main thread handles it.
     if (thread.joinable()) {
       thread.join();
     }
