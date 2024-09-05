@@ -581,13 +581,20 @@ void Storage_Module_Server::doStartReplay(const CommandPacketStartReplay& comman
   std::string fileName = m_parent->m_storageRoot + "/" + std::to_string(m_serial) + "/" + std::to_string(streamID) + "/stream0.dat";
   m_replayFiles[0] = std::make_shared<ReceiverFile>(fileName);
 
-  // Open the camera stream files for each stream ID and start the stream receiver threads.
+  // Open the camera stream files for each stream ID, add them round-robin along with camera IDs to a set of
+  // vectors and start the stream replay threads with those vectors.
   m_stopReplayThreads = false;
-  m_replayThreads.resize(cameras.size() + 1);
+  static const size_t NUM_REPLAY_THREADS = 5;
+  std::vector< std::vector<ReplayCameraDescription> > cameraBatches(NUM_REPLAY_THREADS);
   for (uint32_t i = 1; i <= cameras.size(); i++) {
+    ReplayCameraDescription desc;
+    desc.cameraID = i;
     std::string fileName = m_parent->m_storageRoot + "/" + std::to_string(m_serial) + "/" + std::to_string(streamID) + "/stream" + std::to_string(i) + ".dat";
-    m_replayFiles[i] = std::make_shared<ReceiverFile>(fileName);
-    m_replayThreads[i] = std::thread(&Storage_Module_Server::ReplayThread, this, i, m_replayFiles[i]);
+    desc.receiver = std::make_shared<ReceiverFile>(fileName);
+    cameraBatches[(i-1) % cameraBatches.size()].push_back(desc);
+  }
+  for (size_t i = 0; i < cameraBatches.size(); i++) {
+    m_replayThreads[i] = std::thread(&Storage_Module_Server::ReplayThread, this, cameraBatches[i]);
   }
 
   // Switching away from live mode and not paused.
@@ -820,48 +827,71 @@ void Storage_Module_Server::doStopReplay(const CommandPacketStopReplay& command,
   }
 }
 
-void Storage_Module_Server::ReplayThread(uint32_t cameraID, std::shared_ptr<ReceiverFile> receiver)
+void Storage_Module_Server::ReplayThread(std::vector<ReplayCameraDescription> cameras)
 {
   if (m_verbosity > 4) {
-    std::cout << "    Storage_Module_Server::ReplayThread(): Starting thread for camera " << cameraID << std::endl;
+    std::cout << "    Storage_Module_Server::ReplayThread(): Starting thread for cameras";
+    for (const auto& camera : cameras) {
+      std::cout << " " << camera.cameraID;
+    }
+    std::cout << std::endl;
   }
 
-  // Construct the queue to receive packets from the input thread.
-  std::shared_ptr< SpinFreeQueue< std::shared_ptr<PacketTime> > >
-    inputQueue(new SpinFreeQueue< std::shared_ptr<PacketTime> >());
+  // Construct the queue to receive packets from the input thread for each camera.
+  std::map<uint32_t, std::shared_ptr< SpinFreeQueue< std::shared_ptr<PacketTime> > > > inputQueues;
+  std::map<uint32_t, std::thread> inputThreads;
+  for (const auto& camera : cameras) {
+    // Construct the queue to receive packets from the input thread for each camera.
+    // (This is a shared pointer so that it can be passed to the input thread.)
+    inputQueues[camera.cameraID] =
+    std::make_shared< SpinFreeQueue< std::shared_ptr<PacketTime> > >();
 
-  // Start the input thread
-  std::thread inputThread(&Storage_Module_Server::ReplayInputThread, this, receiver, inputQueue);
+    // Start the input thread
+    inputThreads[camera.cameraID] = std::thread(&Storage_Module_Server::ReplayInputThread, this, camera.receiver, inputQueues[camera.cameraID]);
+  }
 
-  // While we're not done, get packets from the imput thread and send their messages to the clients when their
-  // time has arrived.
-  std::shared_ptr<PacketTime> packetTime;
+  // While we're not done, get packets from the input threads and send their messages to the clients of the
+  // associated camera when their time has arrived. Busy wait, looping across all cameras.
+  std::map<uint32_t, std::shared_ptr<PacketTime> > packetTimes;
   while (!m_stopReplayThreads) {
-    // If we have no cached packet, get one from the input queue if it is available
-    if (!packetTime) {
-      if (!inputQueue->dequeue(packetTime, std::chrono::milliseconds(10))) {
-        continue;
-      }
-    }
 
-    if (packetTime && packetTime->elapsedTime <= m_replayElapsedTime->ElapsedTime()) {
-      /// @todo Handle skipping packets when there is a specified stride, and don't start sending until the first message is in the past.'
-      std::string ret = SendImageStreamPacketToClients(cameraID, packetTime->packet, m_replayFirstTime, m_replayInitialTime);
-      if (!ret.empty()) {
-        if (m_verbosity >= 0) {
-          std::cerr << "Storage_Module_Server::ReplayThread(): Error sending stream packet: " + ret << std::endl;
+    for (const auto& camera : cameras) {
+      uint32_t cameraID = camera.cameraID;
+      std::shared_ptr<PacketTime> &packetTime = packetTimes[cameraID];
+
+      // If we have no cached packet, get one from the input queue if it is available
+      if (!packetTime) {
+        if (!inputQueues[cameraID]->dequeue(packetTime, std::chrono::milliseconds(10))) {
+          continue;
         }
       }
-      packetTime.reset();
+
+      // If it is time to send the packet, do so.
+      if (packetTime && packetTime->elapsedTime <= m_replayElapsedTime->ElapsedTime()) {
+        /// @todo Handle skipping packets when there is a specified stride, and don't start sending until the first message is in the past.'
+        std::string ret = SendImageStreamPacketToClients(cameraID, packetTime->packet, m_replayFirstTime, m_replayInitialTime);
+        if (!ret.empty()) {
+          if (m_verbosity >= 0) {
+            std::cerr << "Storage_Module_Server::ReplayThread(): Error sending stream packet: " + ret << std::endl;
+          }
+        }
+        packetTime.reset();
+      }
     }
   }
-  packetTime.reset();
+  packetTimes.clear();
 
-  // Wait for the input thread to finish.
-  inputThread.join();
+  // Wait for the input threads to finish.
+  for (auto& inputThread : inputThreads) {
+    inputThread.second.join();
+  }
 
   if (m_verbosity > 4) {
-    std::cout << "    Storage_Module_Server::ReplayThread(): Ending thread for camera " << cameraID << std::endl;
+    std::cout << "    Storage_Module_Server::ReplayThread(): Ending thread for cameras";
+    for (const auto& camera : cameras) {
+      std::cout << " " << camera.cameraID;
+    }
+    std::cout << std::endl;
   }
 }
 

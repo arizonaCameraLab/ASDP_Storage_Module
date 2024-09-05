@@ -133,15 +133,23 @@ protected:
     double elapsedTime = 0.0; ///< The time the packet is ready to send since stream start.
   };
 
+  // @brief Description of a camera to be handled by the replay thread.
+  struct ReplayCameraDescription {
+    uint32_t cameraID;  ///< The ID of the camera.
+    std::shared_ptr<ReceiverFile> receiver;  ///< The file to read packets from.
+  };
+
+  /// @brief Body of a thread that replays for a vector of cameras.
+  /// @details To reduce the overall system load, each thread handles multiple cameras.
+  /// For each camera, it reads packets from the file for each camera and sends them to all clients
+  /// associated with each camera when their time has arrived.
+  /// @param cameras Vector of descriptions of cameras to handle.
+  void ReplayThread(std::vector<ReplayCameraDescription> cameras);
+
   /// Tells the replay per-camera streams to stop.
   std::atomic_bool m_stopReplayThreads;
   /// Replay threads for each camera.
   std::vector< std::thread > m_replayThreads;
-  /// @brief Body of a thread that replays to a single camera.
-  /// @param cameraID The ID of the camera to replay.
-  /// @param inFile The file to read packets from.
-  /// @param timer The timer to use to replay packets at the correct time.
-  void ReplayThread(uint32_t cameraID, std::shared_ptr<ReceiverFile> receiver);
 
   /// @brief Body of a thread that reads packets from disk and queues them for a single camera.
   /// @param receiver The file to read packets from.
