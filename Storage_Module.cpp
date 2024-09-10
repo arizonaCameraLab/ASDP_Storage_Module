@@ -1846,6 +1846,9 @@ void Storage_Module::StreamReceiverThread(std::shared_ptr<ReceiverInfo> receiver
 
   while (!m_stop) {
 
+    // Keep track of the previous sequence number and report if there is a gap
+    uint32_t previousSequenceNumber = 0;
+
     // See if we have changed to a new stream writer.  If so, flush the current buffer to disk and
     // get a new buffer from the pool.
     {
@@ -1871,12 +1874,27 @@ void Storage_Module::StreamReceiverThread(std::shared_ptr<ReceiverInfo> receiver
       buffer = bufferPool.GetBuffer();
       bytesInBuffer = 0;
       previousSender = currentSender;
+      previousSequenceNumber = 0;
     }
 
     // Get the next packet from the stream, adding it to the end of our existing buffer.
     // Time out after 1 ms so we can check for a stop condition.
     std::shared_ptr<StreamPacket> packet;
     Status status = receiver->m_receiver->ReceiveStreamPacket(1e-3, packet, bytesInBuffer, buffer);
+
+    // Check the sequence number for a gap.
+    if (status == OKAY) {
+      uint32_t sequenceNumber;
+      status = packet->GetSequenceNumber(sequenceNumber);
+      if (status == OKAY) {
+        if (previousSequenceNumber != 0 && sequenceNumber != previousSequenceNumber + 1) {
+          if (m_verbosity >= 0) {
+            std::cerr << "Storage_Module::StreamReceiverThread() gap in sequence numbers: " << previousSequenceNumber << " to " << sequenceNumber << std::endl;
+          }
+        }
+        previousSequenceNumber = sequenceNumber;
+      }
+    }
 
     // See if we've reached the high water mark for the buffer.  If so, copy the remaining bytes
     // past the last full disk block into a new buffer and then write the full-block-sized portion
