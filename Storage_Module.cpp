@@ -1904,7 +1904,7 @@ void Storage_Module::StreamReceiverThread(std::shared_ptr<ReceiverInfo> receiver
       std::shared_ptr<std::vector<uint8_t>> newBuffer = bufferPool.GetBuffer();
       uint32_t fullBlocks = m_persistentState.DiskBlockSize() * (bytesInBuffer / m_persistentState.DiskBlockSize());
       if (fullBlocks < bytesInBuffer) {
-        std::copy(buffer->data() + fullBlocks + 1, buffer->data() + bytesInBuffer, newBuffer->data());
+        std::copy(buffer->data() + fullBlocks, buffer->data() + bytesInBuffer, newBuffer->data());
       }
       bytesInBuffer -= fullBlocks;
 
