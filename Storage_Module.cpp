@@ -1844,10 +1844,10 @@ void Storage_Module::StreamReceiverThread(std::shared_ptr<ReceiverInfo> receiver
   std::shared_ptr<SenderFile> previousSender;
   std::shared_ptr<SenderFile> currentSender;
 
-  while (!m_stop) {
+  // Keep track of the previous sequence number and report if there is a gap
+  uint32_t previousSequenceNumber = 0;
 
-    // Keep track of the previous sequence number and report if there is a gap
-    uint32_t previousSequenceNumber = 0;
+  while (!m_stop) {
 
     // See if we have changed to a new stream writer.  If so, flush the current buffer to disk and
     // get a new buffer from the pool.
