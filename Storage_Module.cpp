@@ -1887,7 +1887,7 @@ void Storage_Module::StreamReceiverThread(std::shared_ptr<ReceiverInfo> receiver
       uint32_t sequenceNumber;
       status = packet->GetSequenceNumber(sequenceNumber);
       if (status == OKAY) {
-        if (previousSequenceNumber != 0 && sequenceNumber != previousSequenceNumber + 1) {
+        if ((previousSequenceNumber != 0) && (sequenceNumber != previousSequenceNumber + 1)) {
           if (m_verbosity >= 0) {
             std::cerr << "Storage_Module::StreamReceiverThread() gap in sequence numbers: " << previousSequenceNumber << " to " << sequenceNumber << std::endl;
           }
@@ -1917,7 +1917,7 @@ void Storage_Module::StreamReceiverThread(std::shared_ptr<ReceiverInfo> receiver
         writeQueue.enqueue(info);
       }
 
-      // Make the new buffer the current buffer.
+      // Make the new buffer the current buffer, which will release the old one back into the pool.
       buffer = newBuffer;
     }
 
