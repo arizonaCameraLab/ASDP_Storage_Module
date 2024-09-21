@@ -930,6 +930,9 @@ void Storage_Module_Server::ReplayInputThread(std::shared_ptr<ReceiverFile> rece
 
       // Queue the packet and then send all packets that are ready.
       std::list< std::shared_ptr<StreamPacket> > packets = sortedQueue.AddPacket(packet);
+      if (packets.size() > 1 && m_verbosity >= 10) {
+        std::cout << "Storage_Module_Server::ReplayInputThread(): Re-ordering packets" << std::endl;
+      }
       while (!packets.empty()) {
         std::shared_ptr<PacketTime> packetTime(new PacketTime);
         packetTime->packet = packets.front();
