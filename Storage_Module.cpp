@@ -13,6 +13,7 @@
 #include <nlohmann/json.hpp>
 #include <ASDP_BufferPool.h>
 #include <ASDP_SpinFreeQueue.hpp>
+#include <ASDP_StreamPacketSortedQueue.h>
 
 using namespace asdp;
 using json = nlohmann::json;
@@ -905,13 +906,18 @@ void Storage_Module_Server::ReplayInputThread(std::shared_ptr<ReceiverFile> rece
   uint32_t numPrefetch = 100;
   asdp::BufferPool bufferPool(m_parent->m_persistentState.TotalBufferSize(), numPrefetch);
 
+  // Use a sorted queue to handle any re-ordering that happened when the packets were stored.
+  StreamPacketSortedQueue sortedQueue(50);
+
   // Receive packets from the receiver (disk) and queue them until the queue has enough entries.
+  Status status;
   while (!m_stopReplayThreads) {
     if (inputQueue->awaitEmpty(numPrefetch, std::chrono::milliseconds(100))) {
 
-      std::shared_ptr<PacketTime> packetTime(new PacketTime);
+      // Get the next packet from the receiver.
+      std::shared_ptr<StreamPacket> packet;
       size_t offset = 0;
-      Status status = receiver->ReceiveStreamPacket(0.0, packetTime->packet, offset, bufferPool.GetBuffer());
+      status = receiver->ReceiveStreamPacket(0.0, packet, offset, bufferPool.GetBuffer());
       if (status == TIMEOUT) {
         continue;
       }
@@ -922,34 +928,42 @@ void Storage_Module_Server::ReplayInputThread(std::shared_ptr<ReceiverFile> rece
         break;
       }
 
-      // Fill in the time, which is the difference between the time in the first message of the packet
-      // and the time of the first message that was replayed from this stored data set in the main stream.
-      std::shared_ptr<Message> msg;
-      status = packetTime->packet->GetNextMessage(msg);
-      if ((status != OKAY) || (msg == nullptr)) {
-        if (m_verbosity >= 0) {
-          std::cerr << "Storage_Module_Server::ReplayInputThread(): Error getting message from packet: " << ErrorMessage(status) << std::endl;
-        }
-        break;
-      }
-      asdp::Time msgTime;
-      status = msg->GetTime(msgTime);
-      if (status != OKAY) {
-        if (m_verbosity >= 0) {
-          std::cerr << "Storage_Module_Server::ReplayInputThread(): Error getting time from message: " << ErrorMessage(status) << std::endl;
-        }
-        break;
-      }
-      asdp::Time elapsed = (msgTime - m_replayFirstTime);
-      if (msgTime < m_replayFirstTime) {
-        // This stream happened to have a message earlier than the first one in the main stream,
-        // clamp it to 0 so it will get played immediately.
-        elapsed = 0.0;
-      }
-      packetTime->elapsedTime = elapsed.seconds + (elapsed.microseconds / 1e6);
+      // Queue the packet and then send all packets that are ready.
+      std::list< std::shared_ptr<StreamPacket> > packets = sortedQueue.AddPacket(packet);
+      while (!packets.empty()) {
+        std::shared_ptr<PacketTime> packetTime(new PacketTime);
+        packetTime->packet = packets.front();
+        packets.pop_front();
 
-      // Queue the packet+time.
-      inputQueue->enqueue(packetTime);
+        // Fill in the time, which is the difference between the time in the first message of the packet
+        // and the time of the first message that was replayed from this stored data set in the main stream.
+        std::shared_ptr<Message> msg;
+        status = packetTime->packet->GetNextMessage(msg);
+        if ((status != OKAY) || (msg == nullptr)) {
+          if (m_verbosity >= 0) {
+            std::cerr << "Storage_Module_Server::ReplayInputThread(): Error getting message from packet: " << ErrorMessage(status) << std::endl;
+          }
+          break;
+        }
+        asdp::Time msgTime;
+        status = msg->GetTime(msgTime);
+        if (status != OKAY) {
+          if (m_verbosity >= 0) {
+            std::cerr << "Storage_Module_Server::ReplayInputThread(): Error getting time from message: " << ErrorMessage(status) << std::endl;
+          }
+          break;
+        }
+        asdp::Time elapsed = (msgTime - m_replayFirstTime);
+        if (msgTime < m_replayFirstTime) {
+          // This stream happened to have a message earlier than the first one in the main stream,
+          // clamp it to 0 so it will get played immediately.
+          elapsed = 0.0;
+        }
+        packetTime->elapsedTime = elapsed.seconds + (elapsed.microseconds / 1e6);
+
+        // Queue the packet+time.
+        inputQueue->enqueue(packetTime);
+      }
     }
   }
 
