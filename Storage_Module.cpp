@@ -548,8 +548,7 @@ void Storage_Module_Server::doStartReplay(const CommandPacketStartReplay& comman
     if (m_verbosity >= 0) {
       std::cerr << "Storage_Module_Server::doStartReplay(): " + error << std::endl;
     }
-    // Report the error and return.  We will not be able to replay without the file.
-    /// @todo Send an error event to the client.
+    // Ignore the error and return.  We will not be able to replay without the file.
     m_replayFiles.clear();
     return;
   }
