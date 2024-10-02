@@ -538,15 +538,18 @@ void Storage_Module_Server::doStartReplay(const CommandPacketStartReplay& comman
   // Open the main stream file for the stream ID and read the first message from it, storing its time that we
   // will use to offset message times.  Then continue to read messages until we get a status message and use it
   // to set the initial state of the server.
-  std::string error = ReadInitialTimeAndState(streamID, m_stateMessage);
-  if (m_stateMessage != nullptr) {
+  std::shared_ptr<MessageState> stateMessage;
+  std::string error = ReadInitialTimeAndState(streamID, stateMessage);
+  if (stateMessage != nullptr) {
+    m_stateMessage = stateMessage;
     ConfigureStateFromStoredState();
   }
   if (!error.empty()) {
     if (m_verbosity >= 0) {
       std::cerr << "Storage_Module_Server::doStartReplay(): " + error << std::endl;
     }
-    // Ignore the error and return.  We will not be able to replay without the file.
+    // Report the error and return.  We will not be able to replay without the file.
+    /// @todo Send an error event to the client.
     m_replayFiles.clear();
     return;
   }
@@ -635,7 +638,7 @@ void Storage_Module_Server::doStartReplay(const CommandPacketStartReplay& comman
     MessageEvent message(*packet, nowInLive, 0, START_OF_REPLAY,
       std::to_string(streamID));
     if (message.GetConstructorStatus() != OKAY) {
-      m_error = "Storage_Module_Server::doStartReplay(): Error constructing MessageReplayStopped: " + ErrorMessage(message.GetConstructorStatus());
+      m_error = "Storage_Module_Server::doStartReplay(): Error constructing MessageReplayStarted: " + ErrorMessage(message.GetConstructorStatus());
       return;
     }
 
