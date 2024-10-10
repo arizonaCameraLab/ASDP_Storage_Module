@@ -13,7 +13,7 @@
 
 using namespace asdp;
 
-static std::string VERSION = "1.1.0";
+static std::string VERSION = "1.2.0";
 
 void Usage(const char* programName, int code)
 {
@@ -76,7 +76,7 @@ int main(int argc, char** argv)
   // Open a Storage Module, specifying the NIC to listen and broadcast on.
   {
     if (verbosity > 0) {
-      std::cout << "Opening storage module listening on " << NICNameIn << " and broadcasting on " << NICNameOut << std::endl;
+      std::cout << "Opening storage module version " << VERSION << " listening on " << NICNameIn << " and broadcasting on " << NICNameOut << std::endl;
     }
     Storage_Module sModule(NICNameIn, NICNameOut, StorageRoot, verbosity);
     if (sModule.GetConstructorStatus() != OKAY) {

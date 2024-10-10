@@ -587,8 +587,9 @@ void Storage_Module_Server::doStartReplay(const CommandPacketStartReplay& comman
   // Open the camera stream files for each stream ID, add them round-robin along with camera IDs to a set of
   // vectors and start the stream replay threads with those vectors.
   m_stopReplayThreads = false;
-  static const size_t NUM_REPLAY_THREADS = 9;
-  std::vector< std::vector<ReplayCameraDescription> > cameraBatches(NUM_REPLAY_THREADS);
+  static const size_t MAX_REPLAY_THREADS = 9;
+  std::vector< std::vector<ReplayCameraDescription> > cameraBatches(
+    std::min(m_replayThreads.size(), MAX_REPLAY_THREADS));
   for (uint32_t i = 1; i <= cameras.size(); i++) {
     ReplayCameraDescription desc;
     desc.cameraID = i;
