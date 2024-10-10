@@ -1042,32 +1042,35 @@ Status Storage_Module_Server::SendModifiedStateMessage(std::shared_ptr<MessageSt
   uint32_t numSystemTemperatures;
   std::vector<TriggerInfo> triggers;
 
-  Status status = original->GetFeatures(features);
-  if (status != OKAY) {
-    return status;
-  }
-  status = original->GetCameras(cameras);
-  if (status != OKAY) {
-    return status;
-  }
-  status = original->GetNumTempSensorsPerCamera(numTemperaturesPerCamera);
-  if (status != OKAY) {
-    return status;
-  }
-  status = original->GetNumExternalTempSensors(numSystemTemperatures);
-  if (status != OKAY) {
-    return status;
-  }
-  status = original->GetTriggerConfigs(triggers);
-  if (status != OKAY) {
-    return status;
-  }
-
-  // If the specified time code is zero, read the time from the original message instead.
-  if (timeCode.seconds == 0 && timeCode.microseconds == 0) {
-    status = original->GetTime(timeCode);
+  Status status;
+  if (original != nullptr) {
+    status = original->GetFeatures(features);
     if (status != OKAY) {
       return status;
+    }
+    status = original->GetCameras(cameras);
+    if (status != OKAY) {
+      return status;
+    }
+    status = original->GetNumTempSensorsPerCamera(numTemperaturesPerCamera);
+    if (status != OKAY) {
+      return status;
+    }
+    status = original->GetNumExternalTempSensors(numSystemTemperatures);
+    if (status != OKAY) {
+      return status;
+    }
+    status = original->GetTriggerConfigs(triggers);
+    if (status != OKAY) {
+      return status;
+    }
+
+    // If the specified time code is zero, read the time from the original message instead.
+    if (timeCode.seconds == 0 && timeCode.microseconds == 0) {
+      status = original->GetTime(timeCode);
+      if (status != OKAY) {
+        return status;
+      }
     }
   }
 
