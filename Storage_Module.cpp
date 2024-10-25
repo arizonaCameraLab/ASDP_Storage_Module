@@ -18,6 +18,36 @@
 using namespace asdp;
 using json = nlohmann::json;
 
+static bool parseVersion(const std::string& versionStr, uint16_t& major, uint16_t& minor, uint16_t& patch) {
+  size_t pos1 = versionStr.find('.');
+  if (pos1 == std::string::npos) {
+    std::cerr << "Invalid version format. Expected format: major.minor.patch" << std::endl;
+    return false;
+  }
+
+  size_t pos2 = versionStr.find('.', pos1 + 1);
+  if (pos2 == std::string::npos) {
+    std::cerr << "Invalid version format. Expected format: major.minor.patch" << std::endl;
+    return false;
+  }
+
+  try {
+    major = static_cast<uint16_t>(std::stoi(versionStr.substr(0, pos1)));
+    minor = static_cast<uint16_t>(std::stoi(versionStr.substr(pos1 + 1, pos2 - pos1 - 1)));
+    patch = static_cast<uint16_t>(std::stoi(versionStr.substr(pos2 + 1)));
+  }
+  catch (const std::invalid_argument& e) {
+    std::cerr << "Invalid version number: " << e.what() << std::endl;
+    return false;
+  }
+  catch (const std::out_of_range& e) {
+    std::cerr << "Version number out of range: " << e.what() << std::endl;
+    return false;
+  }
+
+  return true;
+}
+
 Storage_Module_Server::Storage_Module_Server(Storage_Module* parent, uint32_t serialNumber, const std::string& NicName,
     uint16_t sendPort, uint16_t listenPort, uint32_t maxPayloadSize, int verbosity)
   : CoreServerBase(serialNumber, NicName, sendPort, listenPort, maxPayloadSize, verbosity)
@@ -1266,6 +1296,22 @@ Storage_Module::Storage_Module(const std::string& NicNameIn, const std::string& 
     return;
   }
 
+  // Verify that our major version matches the stored one.
+  std::string version = Core::GetVersion();
+  uint16_t major, minor, patch;
+  if (parseVersion(version, major, minor, patch)) {
+    if (m_persistentState.MajorVersion() != major) {
+      if (m_verbosity >= 0) {
+        std::cerr << "Storage_Module::Storage_Module() version mismatch: " << m_persistentState.MajorVersion() << " != " << major << std::endl;
+      }
+      m_status = INCOMPATIBLE_API_VERSION;
+      return;
+    }
+  } else {
+    m_status = UNEXPECTED_INTERNAL_STATE;
+    return;
+  }
+
   // Verify that the storage root directory exists.
   std::filesystem::path configPath = m_storageRoot;
   if (!std::filesystem::exists(configPath)) {
@@ -1991,6 +2037,13 @@ Storage_Module::PersistentState::PersistentState(const std::string& filename)
   // If the file does not exist, create it with default values (initialized by the delegated constructor).
   if (!std::filesystem::exists(filename)) {
     json j;
+    std::string version = Core::GetVersion();
+    uint16_t major, minor, patch;
+    if (parseVersion(version, major, minor, patch)) {
+      j["majorVersion"] = major;
+      j["minorVersion"] = minor;
+      j["patchVersion"] = patch;
+    }
     j["storingAtRestart"] = StoringAtRestart();
     j["diskBlockSize"] = DiskBlockSize();
     j["totalBufferSize"] = TotalBufferSize();
@@ -2016,6 +2069,22 @@ bool Storage_Module::PersistentState::LoadFromFile()
   }
   json j;
   file >> j;
+  // Parse the values from the JSON object.
+  try {
+    m_majorVersion = j["majorVersion"];
+  } catch (...) {
+    // Leave it alone.
+  }
+  try {
+    m_minorVersion = j["minorVersion"];
+  } catch (...) {
+    // Leave it alone.
+  }
+  try {
+    m_patchVersion = j["patchVersion"];
+  } catch (...) {
+    // Leave it alone.
+  }
   try {
     m_storingAtRestart = j["storingAtRestart"];
   } catch (...) {
@@ -2043,6 +2112,13 @@ bool Storage_Module::PersistentState::SaveToFile() const
 {
   // Write the file and set the values.
   json j;
+  std::string version = Core::GetVersion();
+  uint16_t major, minor, patch;
+  if (parseVersion(version, major, minor, patch)) {
+    j["majorVersion"] = major;
+    j["minorVersion"] = minor;
+    j["patchVersion"] = patch;
+  }
   j["storingAtRestart"] = StoringAtRestart();
   j["diskBlockSize"] = DiskBlockSize();
   j["totalBufferSize"] = TotalBufferSize();

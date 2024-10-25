@@ -272,6 +272,21 @@ protected:
     /// @return Status indicating success or failure.
     bool SaveToFile() const;
 
+    /// @brief Get the major version of the API stored in the files in this directory.
+    uint16_t MajorVersion() const { return m_majorVersion; }
+
+    /// @brief Get the minor version of the API stored in the files in this directory.
+    uint16_t MinorVersion() const { return m_minorVersion; }
+
+    /// @brief Get the patch version of the API stored in the files in this directory.
+    uint16_t PatchVersion() const { return m_patchVersion; }
+
+    void SetVersion(uint16_t major, uint16_t minor, uint16_t patch) {
+      m_majorVersion = major;
+      m_minorVersion = minor;
+      m_patchVersion = patch;
+    }
+
     /// @brief Find out whether we are storing to disk at restart.
     bool StoringAtRestart() const { return m_storingAtRestart; }
 
@@ -303,10 +318,14 @@ protected:
   protected:
     /// @brief Default constructor
     PersistentState() : m_storingAtRestart(false), m_diskBlockSize(1024)
+      , m_majorVersion(0), m_minorVersion(0), m_patchVersion(0)
       , m_totalBufferSize(512*1024), m_highWaterMark(512*1024 - 9000) {};
 
     /// File that we are associated with.
     std::string m_fileName;
+
+    /// Version number of API stored in the files in this directory.
+    uint16_t m_majorVersion, m_minorVersion, m_patchVersion;
 
     /// Are we storing to disk at restart?
     bool m_storingAtRestart;
