@@ -1038,7 +1038,8 @@ Status Storage_Module_Server::SendStateMessage(ClientState& client)
   // If we are idling (neither replaying nor streaming live), then we generate state messages
   // by adjusting the time and adding features to our stored one.  Otherwise, we don't send
   // them because we will be forwarding them from one or the other incoming stream.
-  if (CurrentMode() == Storage_Module_Server::Mode::Idle) {
+  // If we're at the end of the stream after replay, we do send a state message.
+  if (CurrentMode() == Storage_Module_Server::Mode::Idle || m_replayAtEnd) {
     Time time;
     Status status = m_timer->GetCoreTime(time);
     if (status != OKAY) {
