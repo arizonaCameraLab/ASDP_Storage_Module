@@ -223,6 +223,17 @@ void Storage_Module_Server::doEveryLoop()
           return;
         }
       }
+
+      // If we're at the end of the file (no more packets available), record that we are at the end of replay.
+      bool available;
+      status = m_replayFiles[0]->IsPacketAvailable(0, available);
+      if (status != OKAY) {
+        m_error = "doEveryLoop(): Error checking for packet availability: " + ErrorMessage(status);
+        return;
+      }
+      if (!available) {
+        m_replayAtEnd = true;
+      }
     }
 
     // If the current packet is in the present or past then process it.
