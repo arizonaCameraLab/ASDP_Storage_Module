@@ -171,6 +171,8 @@ void Storage_Module_Server::clientBeingRemoved(ClientState& client)
   // Remove any subregions that this client has set up on any of the cameras.
   {
     std::unique_lock<std::shared_mutex> lock(m_replayMutex);
+    // Every entry in a map is a pair of key and value. The first entry in the
+    // pair is the camera ID, which is used to index the map entry and clear it.
     for (const auto& pair : m_subregions) {
       m_subregions[pair.first].clear();
     }
@@ -353,9 +355,9 @@ void Storage_Module_Server::doStreamSubregion(const CommandPacketStreamSubregion
 
   // Store the information, locking the mutex while doing so.  If there is already an entry for this
   // endpoint on this camera and client, overwrite it.  If there is not an entry, add it.
-  ReplayInfo info;
-  info.subregion = subregion;
-  info.writer = writer;
+  std::shared_ptr<ReplayInfo> info = std::make_shared<ReplayInfo>();
+  info->subregion = subregion;
+  info->writer = writer;
   std::unique_lock<std::shared_mutex> lock(m_replayMutex);
   m_subregions[subregion.cameraID][client][endpoint] = info;
 }
@@ -913,7 +915,6 @@ void Storage_Module_Server::ReplayThread(std::vector<ReplayCameraDescription> ca
 
       // If it is time to send the packet, do so.
       if (packetTime && packetTime->elapsedTime <= m_replayElapsedTime->ElapsedTime()) {
-        /// @todo Handle skipping packets when there is a specified stride, and don't start sending until the first message is in the past.'
         std::string ret = SendImageStreamPacketToClients(cameraID, packetTime->packet, m_replayFirstTime, m_replayInitialTime);
         if (!ret.empty()) {
           if (m_verbosity >= 0) {
@@ -924,6 +925,8 @@ void Storage_Module_Server::ReplayThread(std::vector<ReplayCameraDescription> ca
       }
     }
   }
+
+  // Clear the input queues so we don't hold on to buffers in packets.
   packetTimes.clear();
 
   // Wait for the input threads to finish.
@@ -951,7 +954,7 @@ void Storage_Module_Server::ReplayInputThread(std::shared_ptr<ReceiverFile> rece
   asdp::BufferPool bufferPool(m_parent->m_persistentState.TotalBufferSize(), numPrefetch);
 
   // Use a sorted queue to handle any re-ordering that happened when the packets were stored.
-  StreamPacketSortedQueue sortedQueue(50);
+  std::shared_ptr<StreamPacketSortedQueue> sortedQueue = std::make_shared<StreamPacketSortedQueue>(50);
 
   // Receive packets from the receiver (disk) and queue them until the queue has enough entries.
   Status status;
@@ -973,7 +976,7 @@ void Storage_Module_Server::ReplayInputThread(std::shared_ptr<ReceiverFile> rece
       }
 
       // Queue the packet and then send all packets that are ready.
-      std::list< std::shared_ptr<StreamPacket> > packets = sortedQueue.AddPacket(packet);
+      std::list< std::shared_ptr<StreamPacket> > packets = sortedQueue->AddPacket(packet);
       if (packets.size() > 1 && m_verbosity >= 10) {
         std::cout << "Storage_Module_Server::ReplayInputThread(): Re-ordering packets" << std::endl;
       }
@@ -1016,6 +1019,7 @@ void Storage_Module_Server::ReplayInputThread(std::shared_ptr<ReceiverFile> rece
 
   // Remove all of the entries from the queue so that we don't leave any buffers in the pool.
   // This allows the bufferPool object to be destroyed and free all of the memory.
+  sortedQueue.reset();
   while (inputQueue->size()) {
     std::shared_ptr<PacketTime> packetTime;
     inputQueue->dequeue(packetTime, std::chrono::milliseconds(100));
@@ -1267,19 +1271,83 @@ std::string Storage_Module_Server::SendImageStreamPacketToClients(uint32_t camer
   }
 
   // Insert the message into the stream for all endpoints on each client for this camera.
-  std::map<ClientState, std::map<StreamEndpoint, ReplayInfo> > myReplayInfo;
+  std::map<ClientState, std::map<StreamEndpoint, std::shared_ptr<ReplayInfo> > > myReplayInfo;
   {
     std::shared_lock<std::shared_mutex> lock(m_replayMutex);
     myReplayInfo = m_subregions[cameraID];
   }
-  for (const auto& clientMapsPair : myReplayInfo) {
+  for (auto& clientMapsPair : myReplayInfo) {
     const ClientState& client = clientMapsPair.first;
-    for (const auto& subregionMapsPair : clientMapsPair.second) {
+    for (auto& subregionMapsPair : clientMapsPair.second) {
       const StreamEndpoint& endpoint = subregionMapsPair.first;
-      const ReplayInfo& info = subregionMapsPair.second;
+      std::shared_ptr<ReplayInfo> info = subregionMapsPair.second;
+
+      // Handle skipping images when there is a specified stride, and don't start sending until
+      // the begin-frame associated with an image is after the specified start time.
+      if (info->subregion.skipFrames > 0) {
+        // See if we have a begin-frame message in our packet.  If so, record its time.
+        std::shared_ptr<MessageFrameBegin> beginFrame;
+        std::shared_ptr<Message> msg;
+        status = packet->GetNextMessage(msg);
+        if (status != OKAY) {
+          return "Error getting message from packet: " + ErrorMessage(status);
+        }
+        while (msg != nullptr && beginFrame == nullptr) {
+          MessageID msgID;
+          status = msg->GetType(msgID);
+          if (status != OKAY) {
+            return "Error getting message type: " + ErrorMessage(status);
+          }
+          if (msgID == FRAME_BEGIN) {
+            beginFrame = std::make_shared<MessageFrameBegin>(*msg);
+            break;
+          }
+          status = packet->GetNextMessage(msg);
+          if (status != OKAY) {
+            return "Error getting message from packet: " + ErrorMessage(status);
+          }
+        }
+
+        // Handle the packet based on the state.
+
+        // First see if we have gotten to the start time.  If not, skip the packet.
+        // The state is initialized to -1, which means we're waiting for the begin-frame message.
+        if (info->state == -1) {
+          // We're waiting for a begin-frame message that comes after the requested time.
+          // If we have one, we set the state to 0 and clear the beginFrame because we've
+          // already handled it.
+          if (beginFrame != nullptr) {
+            Time time;
+            status = beginFrame->GetTime(time);
+            if (status != OKAY) {
+              return "Error getting time from begin-frame message: " + ErrorMessage(status);
+            }
+            if (time >= Time(info->subregion.startTimeSeconds, info->subregion.startTimeMicroseconds)) {
+              info->state = 0;
+              beginFrame.reset();
+            }
+          }
+        }
+        if (info->state == -1) {
+          continue;
+        }
+
+        // If we're at an un-handled begin frame, increment modulo the skipFrames value.
+        if (beginFrame != nullptr) {
+          info->state = (info->state + 1) % (info->subregion.skipFrames + 1);
+        }
+
+        // Then check to see if we should be skipping this packet
+        // because our state is exactly zero (neither positive nor negative).
+        if (info->state != 0) {
+          continue;
+        }
+      }
+
+      /// @todo Handle subsetting the image to a region of interest.
 
       // Send the packet.
-      status = info.writer->InsertPacket(*packet);
+      status = info->writer->InsertPacket(*packet);
       if (status != OKAY) {
         return "Error sending packet: " + ErrorMessage(status) + " (Client may have disconnected)";
       }
@@ -1429,7 +1497,7 @@ void Storage_Module::ServerThread(std::shared_ptr<ServerInfo> server)
   if (!m_stop) {
     // If we're not stopping, then we had an error.
     if (m_verbosity >= 0) {
-      std::cerr << "Storage_Module::ServerThread() run completed before stopping with error: " << ret << std::endl;
+      std::cerr << "Storage_Module::ServerThread(): run completed before stopping with error: " << ret << std::endl;
     }
     m_status = UNEXPECTED_INTERNAL_STATE;
   }
