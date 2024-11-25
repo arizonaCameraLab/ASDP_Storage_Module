@@ -71,6 +71,11 @@ protected:
   /// @return Empty string on success, message describing the problem on failure.
   std::string ReadInitialTimeAndState(uint32_t streamID, std::shared_ptr<MessageState> &stateMessage);
 
+
+  /// @brief Adjust the specified stream-replay time to match the replay time base.
+  /// @param timeCode The time code to adjust.
+  Time AdjustTimeForReplay(Time const &timeCode) const;
+
   /// @brief Get a vector of stored stream IDs.
   /// @return A vector of stored stream IDs.
   std::vector<uint32_t> getStoredStreamIDs() const;

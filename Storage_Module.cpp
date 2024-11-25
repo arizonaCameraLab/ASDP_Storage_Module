@@ -98,12 +98,14 @@ Status Storage_Module_Server::ConfigureStateFromStoredState()
   }
 
   // Get the list of features that the server supports.
-  // Add the storage API to our features.
+  // Add the storage API to our features if it is not already present.
   Status status = m_stateMessage->GetFeatures(m_features);
   if (status != OKAY) {
     return status;
   }
-  m_features.push_back(STORAGE_API_AVAILABLE);
+  if (std::find(m_features.begin(), m_features.end(), STORAGE_API_AVAILABLE) == m_features.end()) {
+    m_features.push_back(STORAGE_API_AVAILABLE);
+  }
 
   return OKAY;
 }
@@ -712,6 +714,17 @@ void Storage_Module_Server::doStartReplay(const CommandPacketStartReplay& comman
   }
 }
 
+Time Storage_Module_Server::AdjustTimeForReplay(Time const & timeCode) const
+{
+  Time time = timeCode;
+  time += m_replayInitialTime;
+  // Never go below the first time.
+  if (time >= m_replayFirstTime) {
+    time -= m_replayFirstTime;
+  }
+  return std::move(time);
+}
+
 void Storage_Module_Server::doPauseReplay(const CommandPacketPauseReplay& command, ClientState& client)
 {
   // Do nothing if we're not replaying.
@@ -724,12 +737,6 @@ void Storage_Module_Server::doPauseReplay(const CommandPacketPauseReplay& comman
 
   // Tell all clients that we are paused.
   Status status;
-  Time timeCode;
-  status = m_timer->GetCoreTime(timeCode);
-  if (status != OKAY) {
-    m_error = "doPauseReplay(): Error getting time: " + ErrorMessage(status);
-    return;
-  }
   for (auto& client : m_clients) {
     std::shared_ptr<StreamPacket> packet;
     status = client.m_writer->GetCurrentPacket(packet);
@@ -738,7 +745,7 @@ void Storage_Module_Server::doPauseReplay(const CommandPacketPauseReplay& comman
       return;
     }
 
-    MessageEvent message(*packet, timeCode, 0, REPLAY_PAUSED, "");
+    MessageEvent message(*packet, AdjustTimeForReplay(m_streamReplayTime), 0, REPLAY_PAUSED, "");
     if (message.GetConstructorStatus() != OKAY) {
       m_error = "doPauseReplay(): Error constructing MessageStoredStreamList: "
         + ErrorMessage(message.GetConstructorStatus())
@@ -769,12 +776,6 @@ void Storage_Module_Server::doResumeReplay(const CommandPacketResumeReplay& comm
 
   // Tell all clients that we are resumed.
   Status status;
-  Time timeCode;
-  status = m_timer->GetCoreTime(timeCode);
-  if (status != OKAY) {
-    m_error = "doResumeReplay(): Error getting time: " + ErrorMessage(status);
-    return;
-  }
   for (auto& client : m_clients) {
     std::shared_ptr<StreamPacket> packet;
     status = client.m_writer->GetCurrentPacket(packet);
@@ -783,7 +784,7 @@ void Storage_Module_Server::doResumeReplay(const CommandPacketResumeReplay& comm
       return;
     }
 
-    MessageEvent message(*packet, timeCode, 0, REPLAY_RESUMED, "");
+    MessageEvent message(*packet, AdjustTimeForReplay(m_streamReplayTime), 0, REPLAY_RESUMED, "");
     if (message.GetConstructorStatus() != OKAY) {
       m_error = "doResumeReplay(): Error constructing MessageStoredStreamList: "
         + ErrorMessage(message.GetConstructorStatus())
@@ -1200,13 +1201,7 @@ std::string Storage_Module_Server::ForwardPacketToClients(std::shared_ptr<Stream
 
     // If we've been asked to, adjust the time of the message to match the replay time base.
     if (adjustTime) {
-      time += m_replayInitialTime;
-      // Never wrap around to negative time.
-      if (time >= m_replayFirstTime) {
-        time -= m_replayFirstTime;
-      } else {
-        time = m_replayFirstTime;
-      }
+      time = AdjustTimeForReplay(time);
     } else {
       // Default of zero re-uses the original message time, both for the modified state
       // message and for the copy to stream packet.
