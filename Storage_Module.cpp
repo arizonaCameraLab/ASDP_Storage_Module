@@ -295,6 +295,12 @@ void Storage_Module_Server::doReset(const CommandPacketReset& command, ClientSta
     m_error = "doReset(): Error setting negative offset: " + ErrorMessage(status);
     return;
   }
+  Time zeroTime;
+  status = m_timer->SetCorePositiveOffset(zeroTime);
+  if (status != OKAY) {
+    m_error = "doReset(): Error setting positive offset: " + ErrorMessage(status);
+    return;
+  }
 }
 
 void Storage_Module_Server::doSetStreamStatePeriod(const CommandPacketSetStreamStatePeriod& command, ClientState& client)
