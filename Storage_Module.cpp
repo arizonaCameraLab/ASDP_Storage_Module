@@ -98,10 +98,12 @@ Status Storage_Module_Server::ConfigureStateFromStoredState()
   }
 
   // Get the list of features that the server supports.
+  // Add the storage API to our features.
   Status status = m_stateMessage->GetFeatures(m_features);
   if (status != OKAY) {
     return status;
   }
+  m_features.push_back(STORAGE_API_AVAILABLE);
 
   return OKAY;
 }
@@ -1091,8 +1093,8 @@ Status Storage_Module_Server::SendModifiedStateMessage(std::shared_ptr<MessageSt
 
   std::vector<FeatureID> features;
   std::vector<CameraInfo> cameras;
-  uint32_t numTemperaturesPerCamera;
-  uint32_t numSystemTemperatures;
+  uint32_t numTemperaturesPerCamera = 0;
+  uint32_t numSystemTemperatures = 0;
   std::vector<TriggerInfo> triggers;
 
   Status status;
@@ -1203,7 +1205,7 @@ std::string Storage_Module_Server::ForwardPacketToClients(std::shared_ptr<Stream
       if (time >= m_replayFirstTime) {
         time -= m_replayFirstTime;
       } else {
-        time = Time(0, 0);
+        time = m_replayFirstTime;
       }
     } else {
       // Default of zero re-uses the original message time, both for the modified state
@@ -1708,7 +1710,6 @@ void Storage_Module::ClientThread()
         if (m_server->m_stateMessage != nullptr) {
           m_server->ConfigureStateFromStoredState();
         }
-
 
         // See if recording at start-up is enabled for this server.  If so, create the structures that
         // will be used for writing as if we had received the command to start recording.
