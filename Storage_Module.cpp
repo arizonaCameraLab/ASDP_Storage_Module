@@ -202,7 +202,7 @@ void Storage_Module_Server::doEveryLoop()
     // First update the time code that we should be playing through in a thread-safe way so that
     // all of the image-streaming threads can also make use of it.
     {
-      std::shared_lock<std::shared_mutex> lock(m_replayMutex);
+      std::unique_lock<std::shared_mutex> lock(m_replayMutex);
       m_streamReplayTime = m_replayFirstTime + m_replayElapsedTime->ElapsedTime();
     }
 
@@ -243,6 +243,7 @@ void Storage_Module_Server::doEveryLoop()
     }
 
     // If the current packet is in the present or past then process it.
+    // We don't need a lock on m_streamReplayTime here because we're in the same thread that modifies it
     if ((m_replayPacket != nullptr) && (m_replayPacketTime <= m_streamReplayTime)) {
 
       std::string ret = ForwardPacketToClients(m_replayPacket, true);
@@ -745,7 +746,12 @@ void Storage_Module_Server::doPauseReplay(const CommandPacketPauseReplay& comman
       return;
     }
 
-    MessageEvent message(*packet, AdjustTimeForReplay(m_streamReplayTime), 0, REPLAY_PAUSED, "");
+    Time replayTime;
+    {
+      std::shared_lock<std::shared_mutex> lock(m_replayMutex);
+      replayTime = m_streamReplayTime;
+    }
+    MessageEvent message(*packet, AdjustTimeForReplay(replayTime), 0, REPLAY_PAUSED, "");
     if (message.GetConstructorStatus() != OKAY) {
       m_error = "doPauseReplay(): Error constructing MessageStoredStreamList: "
         + ErrorMessage(message.GetConstructorStatus())
@@ -784,7 +790,12 @@ void Storage_Module_Server::doResumeReplay(const CommandPacketResumeReplay& comm
       return;
     }
 
-    MessageEvent message(*packet, AdjustTimeForReplay(m_streamReplayTime), 0, REPLAY_RESUMED, "");
+    Time replayTime;
+    {
+      std::shared_lock<std::shared_mutex> lock(m_replayMutex);
+      replayTime = m_streamReplayTime;
+    }
+    MessageEvent message(*packet, AdjustTimeForReplay(replayTime), 0, REPLAY_RESUMED, "");
     if (message.GetConstructorStatus() != OKAY) {
       m_error = "doResumeReplay(): Error constructing MessageStoredStreamList: "
         + ErrorMessage(message.GetConstructorStatus())
@@ -1111,6 +1122,11 @@ Status Storage_Module_Server::SendModifiedStateMessage(std::shared_ptr<MessageSt
   uint64_t totalDiskSpace = m_totalDiskSpace;
   uint64_t remainingDiskSpace = m_remainingDiskSpace;
   Time streamReplayTime = m_streamReplayTime;
+  Time replayTime;
+  {
+    std::shared_lock<std::shared_mutex> lock(m_replayMutex);
+    streamReplayTime = m_streamReplayTime;
+  }
 
   std::vector<FeatureID> features;
   std::vector<CameraInfo> cameras;
