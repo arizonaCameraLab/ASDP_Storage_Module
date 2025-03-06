@@ -903,7 +903,7 @@ void Storage_Module_Server::ReplayThread(std::vector<ReplayCameraDescription> ca
     std::make_shared< SpinFreeQueue< std::shared_ptr<PacketTime> > >();
 
     // Start the input thread
-    inputThreads[camera.cameraID] = std::thread(&Storage_Module_Server::ReplayInputThread, this, camera.receiver, inputQueues[camera.cameraID]);
+    inputThreads[camera.cameraID] = std::thread(&Storage_Module_Server::ReplayInputThread, this, camera.cameraID, camera.receiver, inputQueues[camera.cameraID]);
   }
 
   // While we're not done, get packets from the input threads and send their messages to the clients of the
@@ -952,7 +952,7 @@ void Storage_Module_Server::ReplayThread(std::vector<ReplayCameraDescription> ca
   }
 }
 
-void Storage_Module_Server::ReplayInputThread(std::shared_ptr<ReceiverFile> receiver,
+void Storage_Module_Server::ReplayInputThread(unsigned cameraID, std::shared_ptr<ReceiverFile> receiver,
   std::shared_ptr< SpinFreeQueue< std::shared_ptr<PacketTime> > > inputQueue)
 {
   // Make a pool of packets to use for receiving messages.  When the packet's destructor is called, it
@@ -968,6 +968,7 @@ void Storage_Module_Server::ReplayInputThread(std::shared_ptr<ReceiverFile> rece
   // Receive packets from the receiver (disk) and queue them until the queue has enough entries.
   Status status;
   bool endOfFile = false;
+  bool hasBeenFilled = false;
   while (!m_stopReplayThreads) {
     if (inputQueue->awaitEmpty(numPrefetch, std::chrono::milliseconds(100))) {
 
@@ -975,6 +976,16 @@ void Storage_Module_Server::ReplayInputThread(std::shared_ptr<ReceiverFile> rece
       if (endOfFile) {
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
         continue;
+      }
+
+      if (inputQueue->size() > numPrefetch / 2) {
+        hasBeenFilled = true;
+      }
+
+      if (hasBeenFilled && inputQueue->size() < 2) {
+        if (m_verbosity > 0) {
+          std::cout << "Input queue " << cameraID << " drained after reaching " << numPrefetch / 2 << "\n";
+	}
       }
 
       // Get the next packet from the receiver.

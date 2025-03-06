@@ -157,9 +157,10 @@ protected:
   std::vector< std::thread > m_replayThreads;
 
   /// @brief Body of a thread that reads packets from disk and queues them for a single camera.
+  /// @param cameraID Camera ID this is supporting (used for debug print info)
   /// @param receiver The file to read packets from.
   /// @param inputQueue The queue to send packets to.
-  void ReplayInputThread(std::shared_ptr<ReceiverFile> receiver,
+  void ReplayInputThread(unsigned cameraID, std::shared_ptr<ReceiverFile> receiver,
     std::shared_ptr< SpinFreeQueue< std::shared_ptr<PacketTime> > > inputQueue);
 
   /// @brief Send all messages from the image packet to relevant clients.
