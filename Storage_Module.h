@@ -53,7 +53,12 @@ protected:
 
   /// @brief Handle operations that must be done every loop, like checking if our thread should stop.
   void doEveryLoop() override;
-  std::chrono::steady_clock::time_point m_lastCheckDiskSpace;
+  std::chrono::steady_clock::time_point m_lastCheckDiskSpace{};
+  std::chrono::steady_clock::time_point m_lastEveryIteration{};
+  std::chrono::steady_clock::time_point m_lastReportIterationTime{};
+  double m_maxTimePerIteration = 0.0;
+  double m_meanTimePerIteration = 0.0;
+  unsigned m_iterationCount = 0;
 
   /// @brief Handle a client being closed.
   void clientBeingRemoved(ClientState& client) override;

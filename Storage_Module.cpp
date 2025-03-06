@@ -190,6 +190,31 @@ void Storage_Module_Server::clientBeingRemoved(ClientState& client)
 
 void Storage_Module_Server::doEveryLoop()
 {
+  // Keep track of the period between calls to this function.  When it has been more than 1 second
+  // since the last time we reported, we'll report the time per iteration statistics and then reset the
+  // counters.
+  if (m_verbosity >= 2) {
+    auto now = std::chrono::steady_clock::now();
+    auto deltaPrint = now - m_lastReportIterationTime;
+    if (deltaPrint > std::chrono::seconds(1)) {
+      if (m_iterationCount > 0) {
+        m_meanTimePerIteration = m_meanTimePerIteration / m_iterationCount;
+        std::cout << "doEveryLoop(): Mean time per iteration: " << m_meanTimePerIteration*1000 << " milliseconds, max: " << m_maxTimePerIteration*1000 << std::endl;
+      }
+      m_iterationCount = 0;
+      m_meanTimePerIteration = 0.0;
+      m_maxTimePerIteration = 0.0;
+      m_lastReportIterationTime = now;
+    } else {
+      auto delta = now - m_lastEveryIteration;
+      double deltaMs = std::chrono::duration_cast<std::chrono::microseconds>(delta).count();
+      m_meanTimePerIteration += deltaMs / 1e6;
+      m_maxTimePerIteration = std::max(m_maxTimePerIteration, deltaMs / 1e6);
+      m_iterationCount++;
+    }
+    m_lastEveryIteration = now;
+  }
+
   // If the threads are supposed to be stopping, set an error indicating
   // this.
   if (m_parent->m_stop) {
