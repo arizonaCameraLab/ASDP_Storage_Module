@@ -174,7 +174,7 @@ void Storage_Module_Server::clientBeingRemoved(ClientState& client)
 {
   // Remove any subregions that this client has set up on any of the cameras.
   {
-    std::unique_lock<std::shared_mutex> lock(m_replayMutex);
+    std::unique_lock<std::shared_mutex> lock(m_subregionMutex);
     // Every entry in a map is a pair of key and value. The first entry in the
     // pair is the camera ID, which is used to index the map entry and clear it.
     for (const auto& pair : m_subregions) {
@@ -368,7 +368,7 @@ void Storage_Module_Server::doStreamSubregion(const CommandPacketStreamSubregion
   std::shared_ptr<ReplayInfo> info = std::make_shared<ReplayInfo>();
   info->subregion = subregion;
   info->writer = writer;
-  std::unique_lock<std::shared_mutex> lock(m_replayMutex);
+  std::unique_lock<std::shared_mutex> lock(m_subregionMutex);
   m_subregions[subregion.cameraID][client][endpoint] = info;
 }
 
@@ -389,7 +389,7 @@ void Storage_Module_Server::doCancelSubregion(const CommandPacketCancelSubregion
   }
 
   // Remove any entry, locking the mutex while doing so.  If there is not an entry, ignore that fact.
-  std::unique_lock<std::shared_mutex> lock(m_replayMutex);
+  std::unique_lock<std::shared_mutex> lock(m_subregionMutex);
   m_subregions[cameraID][client].erase(endpoint);
 }
 
@@ -967,14 +967,22 @@ void Storage_Module_Server::ReplayInputThread(std::shared_ptr<ReceiverFile> rece
 
   // Receive packets from the receiver (disk) and queue them until the queue has enough entries.
   Status status;
+  bool endOfFile = false;
   while (!m_stopReplayThreads) {
     if (inputQueue->awaitEmpty(numPrefetch, std::chrono::milliseconds(100))) {
+
+      // Nothing to do if we're at the end of file.
+      if (endOfFile) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        continue;
+      }
 
       // Get the next packet from the receiver.
       std::shared_ptr<StreamPacket> packet;
       size_t offset = 0;
       status = receiver->ReceiveStreamPacket(0.0, packet, offset, bufferPool.GetBuffer());
       if (status == TIMEOUT) {
+        endOfFile = true;
         continue;
       }
       if (status != OKAY) {
@@ -1276,7 +1284,7 @@ std::string Storage_Module_Server::SendImageStreamPacketToClients(uint32_t camer
   // Insert the message into the stream for all endpoints on each client for this camera.
   std::map<ClientState, std::map<StreamEndpoint, std::shared_ptr<ReplayInfo> > > myReplayInfo;
   {
-    std::shared_lock<std::shared_mutex> lock(m_replayMutex);
+    std::shared_lock<std::shared_mutex> lock(m_subregionMutex);
     myReplayInfo = m_subregions[cameraID];
   }
   for (auto& clientMapsPair : myReplayInfo) {
