@@ -922,7 +922,7 @@ void Storage_Module_Server::ReplayThread(std::vector<ReplayCameraDescription> ca
         }
       }
 
-      // If it is time to send the packet, do so.
+      // If it is time to send the packet, do so and reset the packetTime so we'll grab another next time through.
       if (packetTime && packetTime->elapsedTime <= m_replayElapsedTime->ElapsedTime()) {
         std::string ret = SendImageStreamPacketToClients(cameraID, packetTime->packet, m_replayFirstTime, m_replayInitialTime);
         if (!ret.empty()) {
@@ -1284,6 +1284,7 @@ std::string Storage_Module_Server::SendImageStreamPacketToClients(uint32_t camer
   // Insert the message into the stream for all endpoints on each client for this camera.
   std::map<ClientState, std::map<StreamEndpoint, std::shared_ptr<ReplayInfo> > > myReplayInfo;
   {
+    // Lock the subregion mutex and get a copy of the replay info for this camera.
     std::shared_lock<std::shared_mutex> lock(m_subregionMutex);
     myReplayInfo = m_subregions[cameraID];
   }
