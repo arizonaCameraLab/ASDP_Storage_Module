@@ -229,12 +229,8 @@ void Storage_Module_Server::doEveryLoop()
   // If we are replaying, check for and handle incoming data.
   auto now = std::chrono::steady_clock::now();
   if (m_replaying) {
-    // First update the time code that we should be playing through in a thread-safe way so that
-    // all of the image-streaming threads can also make use of it.
-    {
-      std::unique_lock<std::shared_mutex> lock(m_replayMutex);
-      m_streamReplayTime = getCurrentReplayTime();
-    }
+    // Update the replay time in our parent class.
+    m_streamReplayTime = getCurrentReplayTime();
 
     // If we don't have a next packet (may be held because it was in the future), read one and find
     // its replay time.
@@ -776,12 +772,7 @@ void Storage_Module_Server::doPauseReplay(const CommandPacketPauseReplay& comman
       return;
     }
 
-    Time replayTime;
-    {
-      std::shared_lock<std::shared_mutex> lock(m_replayMutex);
-      replayTime = getCurrentReplayTime();
-    }
-    MessageEvent message(*packet, AdjustTimeForReplay(replayTime), 0, REPLAY_PAUSED, "");
+    MessageEvent message(*packet, AdjustTimeForReplay(getCurrentReplayTime()), 0, REPLAY_PAUSED, "");
     if (message.GetConstructorStatus() != OKAY) {
       m_error = "doPauseReplay(): Error constructing MessageStoredStreamList: "
         + ErrorMessage(message.GetConstructorStatus())
@@ -820,12 +811,7 @@ void Storage_Module_Server::doResumeReplay(const CommandPacketResumeReplay& comm
       return;
     }
 
-    Time replayTime;
-    {
-      std::shared_lock<std::shared_mutex> lock(m_replayMutex);
-      replayTime = getCurrentReplayTime();
-    }
-    MessageEvent message(*packet, AdjustTimeForReplay(replayTime), 0, REPLAY_RESUMED, "");
+    MessageEvent message(*packet, AdjustTimeForReplay(getCurrentReplayTime()), 0, REPLAY_RESUMED, "");
     if (message.GetConstructorStatus() != OKAY) {
       m_error = "doResumeReplay(): Error constructing MessageStoredStreamList: "
         + ErrorMessage(message.GetConstructorStatus())
