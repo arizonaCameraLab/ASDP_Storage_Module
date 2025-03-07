@@ -188,6 +188,11 @@ void Storage_Module_Server::clientBeingRemoved(ClientState& client)
   }
 }
 
+Time Storage_Module_Server::getCurrentReplayTime() const
+{
+  return m_replayFirstTime + m_replayElapsedTime->ElapsedTime();
+}
+
 void Storage_Module_Server::doEveryLoop()
 {
   // Keep track of the period between calls to this function.  When it has been more than the reporting frequency
@@ -228,7 +233,7 @@ void Storage_Module_Server::doEveryLoop()
     // all of the image-streaming threads can also make use of it.
     {
       std::unique_lock<std::shared_mutex> lock(m_replayMutex);
-      m_streamReplayTime = m_replayFirstTime + m_replayElapsedTime->ElapsedTime();
+      m_streamReplayTime = getCurrentReplayTime();
     }
 
     // If we don't have a next packet (may be held because it was in the future), read one and find
@@ -774,7 +779,7 @@ void Storage_Module_Server::doPauseReplay(const CommandPacketPauseReplay& comman
     Time replayTime;
     {
       std::shared_lock<std::shared_mutex> lock(m_replayMutex);
-      replayTime = m_streamReplayTime;
+      replayTime = getCurrentReplayTime();
     }
     MessageEvent message(*packet, AdjustTimeForReplay(replayTime), 0, REPLAY_PAUSED, "");
     if (message.GetConstructorStatus() != OKAY) {
@@ -818,7 +823,7 @@ void Storage_Module_Server::doResumeReplay(const CommandPacketResumeReplay& comm
     Time replayTime;
     {
       std::shared_lock<std::shared_mutex> lock(m_replayMutex);
-      replayTime = m_streamReplayTime;
+      replayTime = getCurrentReplayTime();
     }
     MessageEvent message(*packet, AdjustTimeForReplay(replayTime), 0, REPLAY_RESUMED, "");
     if (message.GetConstructorStatus() != OKAY) {
@@ -1146,12 +1151,7 @@ Status Storage_Module_Server::SendModifiedStateMessage(std::shared_ptr<MessageSt
   uint8_t recordOnReset = m_parent->m_persistentState.StoringAtRestart();
   uint64_t totalDiskSpace = m_totalDiskSpace;
   uint64_t remainingDiskSpace = m_remainingDiskSpace;
-  Time streamReplayTime = m_streamReplayTime;
-  Time replayTime;
-  {
-    std::shared_lock<std::shared_mutex> lock(m_replayMutex);
-    streamReplayTime = m_streamReplayTime;
-  }
+  Time streamReplayTime = getCurrentReplayTime();
 
   std::vector<FeatureID> features;
   std::vector<CameraInfo> cameras;

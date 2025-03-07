@@ -136,6 +136,12 @@ protected:
   /// to look ahead one packet to see if we should pause.
   std::shared_ptr<StreamPacket> m_replayPacket;
   Time m_replayPacketTime;          ///< The time of the next packet we are currently waiting to replay.
+  /// @brief Get the current replay time.
+  /// @details We make this into a function so that multiple threads don't need to rely on the
+  /// main thread to update m_streamReplayTime in a continuous fashion, but can directly determine the
+  /// time they should be replaying to.
+  /// @return The current replay time.
+  Time getCurrentReplayTime() const;
 
   /// @brief Structure holiding a packet and the time it is ready to send.
   struct PacketTime {
