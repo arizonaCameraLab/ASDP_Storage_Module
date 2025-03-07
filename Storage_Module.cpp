@@ -1010,7 +1010,7 @@ void Storage_Module_Server::ReplayInputThread(unsigned cameraID, std::shared_ptr
       }
 
       if (hasBeenFilled && inputQueue->size() < 2) {
-        if (m_verbosity > 0) {
+        if (m_verbosity >= 2) {
           std::cout << "Input queue " << cameraID << " drained after reaching " << numPrefetch / 2 << "\n";
         }
         hasBeenFilled = false;
