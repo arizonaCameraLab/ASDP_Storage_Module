@@ -13,7 +13,7 @@ ElapsedTimeWithPause::ElapsedTimeWithPause()
 
 void ElapsedTimeWithPause::Pause()
 {
-  std::lock_guard<std::mutex> lock(m_mutex);
+  std::unique_lock<std::shared_mutex> lock(m_mutex);
   if (!is_paused) {
     is_paused = true;
     pause_start_time = std::chrono::steady_clock::now();
@@ -22,7 +22,7 @@ void ElapsedTimeWithPause::Pause()
 
 void ElapsedTimeWithPause::Resume()
 {
-  std::lock_guard<std::mutex> lock(m_mutex);
+  std::unique_lock<std::shared_mutex> lock(m_mutex);
   if (is_paused) {
     is_paused = false;
     total_pause_time += std::chrono::steady_clock::now() - pause_start_time;
@@ -31,7 +31,7 @@ void ElapsedTimeWithPause::Resume()
 
 void ElapsedTimeWithPause::Reset()
 {
-  std::lock_guard<std::mutex> lock(m_mutex);
+  std::unique_lock<std::shared_mutex> lock(m_mutex);
   start_time = std::chrono::steady_clock::now();
   total_pause_time = std::chrono::duration<double>::zero();
   is_paused = false;
@@ -39,7 +39,7 @@ void ElapsedTimeWithPause::Reset()
 
 double ElapsedTimeWithPause::ElapsedTime() const
 {
-  std::lock_guard<std::mutex> lock(m_mutex);
+  std::shared_lock<std::shared_mutex> lock(m_mutex);
   std::chrono::time_point<std::chrono::steady_clock> now;
   if (is_paused) {
     now = pause_start_time;

@@ -190,13 +190,13 @@ void Storage_Module_Server::clientBeingRemoved(ClientState& client)
 
 void Storage_Module_Server::doEveryLoop()
 {
-  // Keep track of the period between calls to this function.  When it has been more than 1 second
-  // since the last time we reported, we'll report the time per iteration statistics and then reset the
+  // Keep track of the period between calls to this function.  When it has been more than the reporting frequency
+  // since the last time we reported, report the time per iteration statistics and then reset the
   // counters.
-  if (m_verbosity >= 2) {
+  if (m_verbosity >= 5) {
     auto now = std::chrono::steady_clock::now();
     auto deltaPrint = now - m_lastReportIterationTime;
-    if (deltaPrint > std::chrono::seconds(1)) {
+    if (deltaPrint > std::chrono::milliseconds(500)) {
       if (m_iterationCount > 0) {
         m_meanTimePerIteration = m_meanTimePerIteration / m_iterationCount;
         std::cout << "doEveryLoop(): Mean time per iteration: " << m_meanTimePerIteration*1000 << " milliseconds, max: " << m_maxTimePerIteration*1000 << std::endl;
