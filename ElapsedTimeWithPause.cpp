@@ -3,6 +3,7 @@
  */
 
 #include <thread>
+#include <mutex>
 #include "ElapsedTimeWithPause.h"
 using namespace asdp;
 
