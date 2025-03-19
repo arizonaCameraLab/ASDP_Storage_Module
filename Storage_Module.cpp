@@ -469,12 +469,14 @@ std::vector<uint32_t> Storage_Module_Server::getStoredStreamIDs() const
   dirPath /= std::to_string(m_serial);
   for (const auto& entry : std::filesystem::directory_iterator(dirPath)) {
     uint32_t streamID = 0;
-    try {
-      streamID = std::stoul(entry.path().filename().string());
-      storedStreamIDs.push_back(streamID);
-    }
-    catch (...) {
-      // Nothing to do here.
+    if (entry.is_directory()) {
+      try {
+        streamID = std::stoul(entry.path().filename().string());
+        storedStreamIDs.push_back(streamID);
+      }
+      catch (...) {
+        // Nothing to do here.
+      }
     }
   }
   std::sort(storedStreamIDs.begin(), storedStreamIDs.end());
