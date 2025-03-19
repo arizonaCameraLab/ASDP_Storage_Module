@@ -263,9 +263,7 @@ void Storage_Module_Server::doEveryLoop()
         m_error = "doEveryLoop(): Error checking for packet availability: " + ErrorMessage(status);
         return;
       }
-      if (!available) {
-        m_replayAtEnd = true;
-      }
+      m_replayAtEnd = !available;
     }
 
     // If the current packet is in the present or past then process it.
@@ -292,6 +290,9 @@ void Storage_Module_Server::doEveryLoop()
         }
       }
     }
+  } else {
+    // Not replaying, so can't be at the end.
+    m_replayAtEnd = false;
   }
 
   // Once per second, check and fill in the disk-space information in our state.
