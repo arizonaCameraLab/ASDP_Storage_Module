@@ -198,7 +198,7 @@ void Storage_Module_Server::doEveryLoop()
   // Keep track of the period between calls to this function.  When it has been more than the reporting frequency
   // since the last time we reported, report the time per iteration statistics and then reset the
   // counters.
-  if (m_verbosity >= 5) {
+  if (m_verbosity >= 15) {
     auto now = std::chrono::steady_clock::now();
     auto deltaPrint = now - m_lastReportIterationTime;
     if (deltaPrint > std::chrono::milliseconds(500)) {
