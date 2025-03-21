@@ -1014,7 +1014,7 @@ void Storage_Module_Server::ReplayInputThread(unsigned cameraID, std::shared_ptr
   // will return the memory to the pool.  This speeds up reading because we don't need to allocate a new
   // buffer in the ReceiveStreamPacket() call.  Start with some packets in the pool.  More will be allocated
   // if needed.
-  uint32_t numPrefetch = 200;
+  uint32_t numPrefetch = 345;
   asdp::BufferPool bufferPool(m_parent->m_persistentState.TotalBufferSize(), numPrefetch);
 
   // Use a sorted queue to handle any re-ordering that happened when the packets were stored.

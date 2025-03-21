@@ -13,7 +13,7 @@
 
 using namespace asdp;
 
-static std::string VERSION = "2.7.0";
+static std::string VERSION = "2.8.0";
 
 void Usage(const char* programName, int code)
 {
