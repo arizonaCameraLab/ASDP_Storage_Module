@@ -945,9 +945,10 @@ void Storage_Module_Server::ReplayThread(std::vector<ReplayCameraDescription> ca
       uint32_t cameraID = camera.cameraID;
       std::shared_ptr<PacketTime> &packetTime = packetTimes[cameraID];
 
-      // If we have no cached packet, get one from the input queue if it is available
+      // If we have no cached packet, get one from the input queue if it is available.
+      // NOTE: We must wait at least 1 microsecond to avoid blocking the enqueue calls.
       if (!packetTime) {
-        if (!inputQueues[cameraID]->dequeue(packetTime, std::chrono::milliseconds(0))) {
+        if (!inputQueues[cameraID]->dequeue(packetTime, std::chrono::microseconds(1))) {
           continue;
         }
       }
