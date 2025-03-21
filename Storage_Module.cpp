@@ -970,7 +970,7 @@ void Storage_Module_Server::ReplayThread(std::vector<ReplayCameraDescription> ca
       }
     }
 
-    if (m_verbosity > 4) {
+    if (m_verbosity > 7) {
       auto now = std::chrono::high_resolution_clock::now();
       double timePerIteration = std::chrono::duration<double>(now - lastTime).count();
       meanTimePerIteration += timePerIteration;
@@ -978,7 +978,7 @@ void Storage_Module_Server::ReplayThread(std::vector<ReplayCameraDescription> ca
       iterationCount++;
       lastTime = now;
       if (now - lastReportedTime > std::chrono::milliseconds(2000)) {
-        std::cout << "Mean iteration time: " << meanTimePerIteration * 1e3 / iterationCount
+        std::cout << "Mean replay iteration time: " << meanTimePerIteration * 1e3 / iterationCount
           << "ms (max " << maxTimePerIteration * 1e3 << ")" << std::endl;
         lastReportedTime = now;
         lastTime = std::chrono::high_resolution_clock::now();
@@ -1014,7 +1014,7 @@ void Storage_Module_Server::ReplayInputThread(unsigned cameraID, std::shared_ptr
   // will return the memory to the pool.  This speeds up reading because we don't need to allocate a new
   // buffer in the ReceiveStreamPacket() call.  Start with some packets in the pool.  More will be allocated
   // if needed.
-  uint32_t numPrefetch = 100;
+  uint32_t numPrefetch = 200;
   asdp::BufferPool bufferPool(m_parent->m_persistentState.TotalBufferSize(), numPrefetch);
 
   // Use a sorted queue to handle any re-ordering that happened when the packets were stored.
@@ -1024,6 +1024,11 @@ void Storage_Module_Server::ReplayInputThread(unsigned cameraID, std::shared_ptr
   Status status;
   bool endOfFile = false;
   bool hasBeenFilled = false;
+  auto lastTime = std::chrono::high_resolution_clock::now();
+  int iterationCount = 0;
+  double meanTimePerIteration = 0.0;
+  double maxTimePerIteration = 0.0;
+  auto lastReportedTime = lastTime;
   while (!m_stopReplayThreads) {
     if (inputQueue->awaitEmpty(numPrefetch, std::chrono::milliseconds(100))) {
 
@@ -1099,6 +1104,25 @@ void Storage_Module_Server::ReplayInputThread(unsigned cameraID, std::shared_ptr
         inputQueue->enqueue(packetTime);
       }
     }
+
+    if (m_verbosity > 4) {
+      auto now = std::chrono::high_resolution_clock::now();
+      double timePerIteration = std::chrono::duration<double>(now - lastTime).count();
+      meanTimePerIteration += timePerIteration;
+      maxTimePerIteration = std::max(maxTimePerIteration, timePerIteration);
+      iterationCount++;
+      lastTime = now;
+      if (now - lastReportedTime > std::chrono::milliseconds(2000)) {
+        std::cout << "Mean input iteration time: " << meanTimePerIteration * 1e3 / iterationCount
+          << "ms (max " << maxTimePerIteration * 1e3 << ")" << std::endl;
+        lastReportedTime = now;
+        lastTime = std::chrono::high_resolution_clock::now();
+        meanTimePerIteration = 0.0;
+        maxTimePerIteration = 0.0;
+        iterationCount = 0;
+      }
+    }
+
   }
 
   // Remove all of the entries from the queue so that we don't leave any buffers in the pool.
