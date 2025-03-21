@@ -939,6 +939,11 @@ void Storage_Module_Server::ReplayThread(std::vector<ReplayCameraDescription> ca
   // While we're not done, get packets from the input threads and send their messages to the clients of the
   // associated camera when their time has arrived. Busy wait, looping across all cameras.
   std::map<uint32_t, std::shared_ptr<PacketTime> > packetTimes;
+  auto lastTime = std::chrono::high_resolution_clock::now();
+  int iterationCount = 0;
+  double meanTimePerIteration = 0.0;
+  double maxTimePerIteration = 0.0;
+  auto lastReportedTime = lastTime;
   while (!m_stopReplayThreads) {
 
     for (const auto& camera : cameras) {
@@ -964,6 +969,25 @@ void Storage_Module_Server::ReplayThread(std::vector<ReplayCameraDescription> ca
         packetTime.reset();
       }
     }
+
+    if (m_verbosity > 4) {
+      auto now = std::chrono::high_resolution_clock::now();
+      double timePerIteration = std::chrono::duration<double>(now - lastTime).count();
+      meanTimePerIteration += timePerIteration;
+      maxTimePerIteration = std::max(maxTimePerIteration, timePerIteration);
+      iterationCount++;
+      lastTime = now;
+      if (now - lastReportedTime > std::chrono::milliseconds(2000)) {
+        std::cout << "Mean iteration time: " << meanTimePerIteration * 1e3 / iterationCount
+          << "ms (max " << maxTimePerIteration * 1e3 << ")" << std::endl;
+        lastReportedTime = now;
+        lastTime = std::chrono::high_resolution_clock::now();
+        meanTimePerIteration = 0.0;
+        maxTimePerIteration = 0.0;
+        iterationCount = 0;
+      }
+    }
+
   }
 
   // Clear the input queues so we don't hold on to buffers in packets.
