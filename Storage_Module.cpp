@@ -1460,7 +1460,7 @@ std::string Storage_Module_Server::SendImageStreamPacketToClients(uint32_t camer
         }
       }
 
-      /// @todo Handle subsetting the image to a region of interest.
+      /// @todo Handle subsetting the image to a region of interest. Be sure to adjust begin and end frame flags correctly.
 
       // Send the packet.
       status = info->writer->InsertPacket(*packet);
