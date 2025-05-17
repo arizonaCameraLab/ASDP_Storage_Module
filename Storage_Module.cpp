@@ -1389,7 +1389,7 @@ std::string Storage_Module_Server::SendImageStreamPacketToClients(uint32_t camer
       // the begin-frame associated with an image is after the specified start time.
       if (info->subregion.skipFrames > 0) {
         // See if we have a begin-frame message in our packet.  If so, record its time.
-        std::shared_ptr<MessageFrameBegin> beginFrame;
+        std::shared_ptr<Message> beginFrame;
         std::shared_ptr<Message> msg;
         status = packet->GetNextMessage(msg);
         if (status != OKAY) {
@@ -1401,9 +1401,22 @@ std::string Storage_Module_Server::SendImageStreamPacketToClients(uint32_t camer
           if (status != OKAY) {
             return "Error getting message type: " + ErrorMessage(status);
           }
-          if (msgID == FRAME_BEGIN) {
-            beginFrame = std::make_shared<MessageFrameBegin>(*msg);
-            break;
+          if (msgID == CONSOLIDATED_FRAME_DATA) {
+            MessageConsolidatedFrameData cfd(*msg);
+            status = cfd.GetConstructorStatus();
+            if (status != OKAY) {
+              return "Error getting consolidated frame data: " + ErrorMessage(status);
+            }
+            bool isBeginFrame;
+            status = cfd.GetBeginFrameFlag(isBeginFrame);
+            if (status != OKAY) {
+              return "Error getting begin-frame flag: " + ErrorMessage(status);
+            }
+            if (isBeginFrame) {
+              // We have a begin-frame message.  Save it for later.
+              beginFrame = msg;
+              break;
+            }
           }
           status = packet->GetNextMessage(msg);
           if (status != OKAY) {
