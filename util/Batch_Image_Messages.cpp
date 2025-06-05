@@ -121,18 +121,35 @@ int main(int argc, char** argv)
       badPackets++;
     }
     while (msg) {
+      // Add the message to the output packet.  If it fails, flush the writer and try again.
+      ret = msg->CopyToStreamPacket(*outPacket);
+      if (ret != OKAY) {
+        ret = writer->Flush();
+        if (ret != OKAY) {
+          std::cerr << "Error flushing writer: " << ErrorMessage(ret) << std::endl;
+          return 203;
+        }
+        packetsWritten++;
+        ret = writer->GetCurrentPacket(outPacket);
+        if (ret != OKAY) {
+          std::cerr << "Error getting current packet from writer after flush: " << ErrorMessage(ret) << std::endl;
+          return 204;
+        }
+        ret = msg->CopyToStreamPacket(*outPacket);
+        if (ret != OKAY) {
+          std::cerr << "Error copying consolidated frame data to flushed output packet: " << ErrorMessage(ret) << std::endl;
+          return 205;
+        }
+      }
+
+      // See if this is a consolidated frame data message that holds the end of a frame. If so, we flush the writer once it has been
+      // inserted.
       messagesRead++;
       MessageID type;
       status = msg->GetType(type);
       if (status != OKAY) {
         std::cerr << "Error reading message type: " << ErrorMessage(status) << std::endl;
         return 200;
-      }
-      Time time;
-      status = msg->GetTime(time);
-      if (status != OKAY) {
-        std::cerr << "Error reading message time: " << ErrorMessage(status) << std::endl;
-        return 201;
       }
       switch (type) {
         case CONSOLIDATED_FRAME_DATA:
@@ -144,29 +161,6 @@ int main(int argc, char** argv)
               return 202;
             }
 
-            // Add the message to the output packet.  If it fails, flush the writer and try again.
-            ret = frameData.CopyToStreamPacket(*outPacket);
-            if (ret != OKAY) {
-              ret = writer->Flush();
-              if (ret != OKAY) {
-                std::cerr << "Error flushing writer: " << ErrorMessage(ret) << std::endl;
-                return 203;
-              }
-              packetsWritten++;
-              ret = writer->GetCurrentPacket(outPacket);
-              if (ret != OKAY) {
-                std::cerr << "Error getting current packet from writer after flush: " << ErrorMessage(ret) << std::endl;
-                return 204;
-              }
-              ret = frameData.CopyToStreamPacket(*outPacket);
-              if (ret != OKAY) {
-                std::cerr << "Error copying consolidated frame data to flushed output packet: " << ErrorMessage(ret) << std::endl;
-                return 205;
-              }
-            }
-
-            // See if this holds the end of a frame. If so, we flush the writer once it has been
-            // inserted.
             bool isEndFrame;
             status = frameData.GetEndFrameFlag(isEndFrame);
             if (status != OKAY) {
@@ -190,7 +184,7 @@ int main(int argc, char** argv)
           break;
 
         default:
-          // Other messages are ignored.
+          // Other messages are not treated specially.
           break;
       }
 
