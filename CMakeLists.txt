@@ -146,6 +146,7 @@ if(BUILD_UTILITIES)
   set (UTILS
 	  Time_Disk_Writes
     Time_Disk_Reads
+    Batch_Image_Messages
   )
   foreach (BASE ${UTILS})
     set (APP ${BASE})
