@@ -19,6 +19,14 @@ systems could be used).  On Ubuntu Linux, this can be done as follows
     cmake ../../src/ASDP_Storage_Module
     make
 
+**Packet reduction:** Until the FPGA sending camera packets is updated to send
+multiple lines per message (or multiple messages per packet), the utility program
+*Batch_Image_Messages* must be run on each of the *stream[1+].dat* files stored from
+a run (it is not run on stream0.dat).  This will group multiple image messages per
+packet, which is required for the Storage Module to be able to keep up with the
+full data rate.  There is no loss when the packets are being stored to disk, but
+they cannot be played back quickly enough until they are grouped.
+
 **Run:** The ASDP_Storage_Module can be run from the build directory using the
 following command: `./ASDP_Storage_Module NICNameIn NICNameOut StorageRoot`
 where NICNameIn is the DNS name or dotted decimal network address of the network
