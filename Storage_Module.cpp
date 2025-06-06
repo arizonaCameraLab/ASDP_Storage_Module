@@ -625,7 +625,11 @@ void Storage_Module_Server::doStartReplay(const CommandPacketStartReplay& comman
   std::string error = ReadInitialTimeAndState(streamID, stateMessage);
   if (stateMessage != nullptr) {
     m_stateMessage = stateMessage;
-    ConfigureStateFromStoredState();
+    status = ConfigureStateFromStoredState();
+    if (status != OKAY) {
+      m_error = "Storage_Module_Server::doStartReplay(): Error configuring state from stored state: " + ErrorMessage(status);
+      return;
+    }
   }
   if (!error.empty()) {
     if (m_verbosity >= 0) {
@@ -1781,6 +1785,7 @@ void Storage_Module::ClientThread()
             m_status = status;
             return;
           }
+          m_server_threads.emplace_back(std::thread(&Storage_Module::ServerThread, this, m_servers.back()));
         }
 
         // Keep track of this server as the one we forward data to.
@@ -1816,7 +1821,12 @@ void Storage_Module::ClientThread()
         // our connection drops.
         m_server->m_stateMessage = std::make_shared<MessageState>(state);
         if (m_server->m_stateMessage != nullptr) {
-          m_server->ConfigureStateFromStoredState();
+          status = m_server->ConfigureStateFromStoredState();
+          if (status != OKAY) {
+            // We're broken, so we can't do anything else.  Just set the status and return.
+            m_status = status;
+            return;
+          }
         }
 
         // See if recording at start-up is enabled for this server.  If so, create the structures that

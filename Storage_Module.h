@@ -420,7 +420,7 @@ protected:
   std::vector< std::shared_ptr<ServerInfo> > m_servers;
 
   /// Server threads
-  std::vector< std::thread > m_server_threads;
+  std::vector<std::thread> m_server_threads;
 
   /// @brief Body of a thread that handles a single server.
   /// @param server The server to handle.
