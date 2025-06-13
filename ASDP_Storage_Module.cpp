@@ -38,7 +38,8 @@ int main(int argc, char** argv)
   // the serial number of the server, which defaults to 1.
   for (int i = 1; i < argc; ++i) {
     if (std::string(argv[i]) == "--version") {
-      std::cout << "Storage Module version: " << VERSION << std::endl;
+      std::cout << "Storage Module version: " << VERSION + "-" + BUILD_TYPE << " using Core API "
+        << asdp::Core::GetVersion() << std::endl;
       return 0;
     } else if (std::string(argv[i]) == "--verbosity") {
       if (i + 1 < argc) {

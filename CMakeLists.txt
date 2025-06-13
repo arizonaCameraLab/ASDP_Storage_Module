@@ -103,6 +103,18 @@ set (ASDP_Storage_Module_SOURCES
 
 add_executable(ASDP_Storage_Module ${ASDP_Storage_Module_SOURCES} ${ASDP_Storage_Module_HEADERS})
 target_link_libraries(ASDP_Storage_Module Storage_Module ASDP_Core_API::ASDP_Core_API)
+get_property(isMultiConfig GLOBAL PROPERTY GENERATOR_IS_MULTI_CONFIG)
+if(isMultiConfig)
+  # Multi-config (e.g., Visual Studio, Xcode)
+  target_compile_definitions(ASDP_Storage_Module PRIVATE BUILD_TYPE="$<CONFIG>")
+else()
+  # Single-config (e.g., Makefiles, Ninja)
+  if(CMAKE_BUILD_TYPE AND NOT CMAKE_BUILD_TYPE STREQUAL "")
+    target_compile_definitions(ASDP_Storage_Module PRIVATE BUILD_TYPE="${CMAKE_BUILD_TYPE}")
+  else()
+    target_compile_definitions(ASDP_Storage_Module PRIVATE BUILD_TYPE="Default")
+  endif()
+endif()
 
 include(GNUInstallDirs)
 install(TARGETS ASDP_Storage_Module EXPORT ${PROJECT_NAME}
