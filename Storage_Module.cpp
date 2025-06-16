@@ -87,7 +87,9 @@ Storage_Module_Server::~Storage_Module_Server()
 {
   // Stop the replay if it is running.
   if (m_replaying) {
-    doStopReplay(CommandPacketStopReplay(), m_clients[0]);
+    for (auto& client : m_clients) {
+      doStopReplay(CommandPacketStopReplay(), client);
+    }
   }
 }
 
