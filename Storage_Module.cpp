@@ -604,7 +604,6 @@ void Storage_Module_Server::doStartReplay(const CommandPacketStartReplay& comman
   if (m_replaying) {
     doStopReplay(CommandPacketStopReplay(), client);
   }
-
   std::unique_lock<std::shared_mutex> lock(m_replayMutex);
 
   // Parse the command packet to get the stream ID to replay and time offset.
@@ -753,11 +752,13 @@ void Storage_Module_Server::doStartReplay(const CommandPacketStartReplay& comman
 Time Storage_Module_Server::AdjustTimeForReplay(Time const & timeCode) const
 {
   Time time = timeCode;
-  time += m_replayInitialTime;
-  // Never go below the first time.
+  // Never go below zero before adding the initial time.
   if (time >= m_replayFirstTime) {
     time -= m_replayFirstTime;
+  } else {
+    time = Time(0, 0);
   }
+  time += m_replayInitialTime;
   return std::move(time);
 }
 
