@@ -959,7 +959,7 @@ void Storage_Module_Server::ReplayThread(std::vector<ReplayCameraDescription> ca
   while (!m_stopReplayThreads) {
 
     bool doReport = false;
-    if (m_verbosity > 3) {
+    if (m_verbosity > 5) {
       auto now = std::chrono::steady_clock::now();
       if (now - lastLagReport > std::chrono::milliseconds(10000)) {
         // Skip the first one when we just started.
@@ -1001,7 +1001,7 @@ void Storage_Module_Server::ReplayThread(std::vector<ReplayCameraDescription> ca
         }
         packetTime.reset();
 
-        // Keep track of the least and most lag for this camera.
+        // Keep track of the most lag for this camera.
         if (doReport) {
           // We're doing a report, so reset these
           mostLag[cameraID] = 0;
