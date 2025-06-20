@@ -946,12 +946,12 @@ void Storage_Module_Server::ReplayThread(std::vector<ReplayCameraDescription> ca
 
   // Keep track of the soonest time past desired and latest time past desired for each camera.
   std::map<uint32_t, double> mostLag;
-  std::chrono::high_resolution_clock::time_point lastReport = {};
+  std::chrono::steady_clock::time_point lastLagReport = {};
 
   // While we're not done, get packets from the input threads and send their messages to the clients of the
   // associated camera when their time has arrived. Busy wait, looping across all cameras.
   std::map<uint32_t, std::shared_ptr<PacketTime> > packetTimes;
-  std::chrono::high_resolution_clock::time_point lastTime = {};
+  auto lastTime = std::chrono::steady_clock::now();
   int iterationCount = 0;
   double meanTimePerIteration = 0.0;
   double maxTimePerIteration = 0.0;
@@ -960,10 +960,10 @@ void Storage_Module_Server::ReplayThread(std::vector<ReplayCameraDescription> ca
 
     bool doReport = false;
     if (m_verbosity > 3) {
-      auto now = std::chrono::high_resolution_clock::now();
-      if (now - lastReport > std::chrono::milliseconds(10000)) {
+      auto now = std::chrono::steady_clock::now();
+      if (now - lastLagReport > std::chrono::milliseconds(10000)) {
         // Skip the first one when we just started.
-        if (now - lastReport < std::chrono::milliseconds(20000)) {
+        if (now - lastLagReport < std::chrono::milliseconds(20000)) {
           double maxLag = std::numeric_limits<double>::min();
           for (const auto& camera : cameras) {
             uint32_t cameraID = camera.cameraID;
@@ -974,7 +974,7 @@ void Storage_Module_Server::ReplayThread(std::vector<ReplayCameraDescription> ca
           std::cout << "ReplayThread(): Max lag: " << maxLag << "s" << std::endl;
         }
         doReport = true;
-        lastReport = now;
+        lastLagReport = now;
       }
     }
 
@@ -1012,7 +1012,7 @@ void Storage_Module_Server::ReplayThread(std::vector<ReplayCameraDescription> ca
     }
 
     if (m_verbosity > 7) {
-      auto now = std::chrono::high_resolution_clock::now();
+      auto now = std::chrono::steady_clock::now();
       double timePerIteration = std::chrono::duration<double>(now - lastTime).count();
       meanTimePerIteration += timePerIteration;
       maxTimePerIteration = std::max(maxTimePerIteration, timePerIteration);
@@ -1022,7 +1022,7 @@ void Storage_Module_Server::ReplayThread(std::vector<ReplayCameraDescription> ca
         std::cout << "Mean replay iteration time: " << meanTimePerIteration * 1e3 / iterationCount
           << "ms (max " << maxTimePerIteration * 1e3 << ")" << std::endl;
         lastReportedTime = now;
-        lastTime = std::chrono::high_resolution_clock::now();
+        lastTime = std::chrono::steady_clock::now();
         meanTimePerIteration = 0.0;
         maxTimePerIteration = 0.0;
         iterationCount = 0;
@@ -1065,7 +1065,7 @@ void Storage_Module_Server::ReplayInputThread(unsigned cameraID, std::shared_ptr
   Status status;
   bool endOfFile = false;
   bool hasBeenFilled = false;
-  auto lastTime = std::chrono::high_resolution_clock::now();
+  auto lastTime = std::chrono::steady_clock::now();
   int iterationCount = 0;
   double meanTimePerIteration = 0.0;
   double maxTimePerIteration = 0.0;
@@ -1147,7 +1147,7 @@ void Storage_Module_Server::ReplayInputThread(unsigned cameraID, std::shared_ptr
     }
 
     if (m_verbosity > 4) {
-      auto now = std::chrono::high_resolution_clock::now();
+      auto now = std::chrono::steady_clock::now();
       double timePerIteration = std::chrono::duration<double>(now - lastTime).count();
       meanTimePerIteration += timePerIteration;
       maxTimePerIteration = std::max(maxTimePerIteration, timePerIteration);
@@ -1157,7 +1157,7 @@ void Storage_Module_Server::ReplayInputThread(unsigned cameraID, std::shared_ptr
         std::cout << "Mean input iteration time: " << meanTimePerIteration * 1e3 / iterationCount
           << "ms (max " << maxTimePerIteration * 1e3 << ")" << std::endl;
         lastReportedTime = now;
-        lastTime = std::chrono::high_resolution_clock::now();
+        lastTime = std::chrono::steady_clock::now();
         meanTimePerIteration = 0.0;
         maxTimePerIteration = 0.0;
         iterationCount = 0;
@@ -1663,7 +1663,7 @@ void Storage_Module::ServerThread(std::shared_ptr<ServerInfo> server)
 std::shared_ptr<Message> Storage_Module::WaitForMessageType(MessageID type, float seconds)
 {
   std::shared_ptr<Message> empty;   ///< We return this on failure.
-  std::chrono::high_resolution_clock::time_point start = std::chrono::high_resolution_clock::now();
+  std::chrono::steady_clock::time_point start = std::chrono::steady_clock::now();
   do {
     std::shared_ptr<StreamPacket> response;
     size_t offset = 0;
@@ -1693,7 +1693,7 @@ std::shared_ptr<Message> Storage_Module::WaitForMessageType(MessageID type, floa
         }
       }
     }
-  } while (std::chrono::duration<double>(std::chrono::high_resolution_clock::now() - start).count() <= seconds);
+  } while (std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count() <= seconds);
 
   return empty;
 }
