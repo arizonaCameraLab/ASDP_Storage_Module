@@ -944,15 +944,39 @@ void Storage_Module_Server::ReplayThread(std::vector<ReplayCameraDescription> ca
     inputThreads[camera.cameraID] = std::thread(&Storage_Module_Server::ReplayInputThread, this, camera.cameraID, camera.receiver, inputQueues[camera.cameraID]);
   }
 
+  // Keep track of the soonest time past desired and latest time past desired for each camera.
+  std::map<uint32_t, double> leastLag, mostLag;
+  std::chrono::high_resolution_clock::time_point lastReport = {};
+
   // While we're not done, get packets from the input threads and send their messages to the clients of the
   // associated camera when their time has arrived. Busy wait, looping across all cameras.
   std::map<uint32_t, std::shared_ptr<PacketTime> > packetTimes;
-  auto lastTime = std::chrono::high_resolution_clock::now();
+  std::chrono::high_resolution_clock::time_point lastTime = {};
   int iterationCount = 0;
   double meanTimePerIteration = 0.0;
   double maxTimePerIteration = 0.0;
   auto lastReportedTime = lastTime;
   while (!m_stopReplayThreads) {
+
+    bool doReport = false;
+    auto now = std::chrono::high_resolution_clock::now();
+    if (now - lastReport > std::chrono::milliseconds(10000)) {
+      // Skip the first one when we just started.
+      if ((now - lastReport < std::chrono::milliseconds(20000)) && (m_verbosity > 3)) {
+        double minLag = std::numeric_limits<double>::max();
+        double maxLag = std::numeric_limits<double>::min();
+        for (const auto& camera : cameras) {
+          uint32_t cameraID = camera.cameraID;
+          if (leastLag.find(cameraID) != leastLag.end() && mostLag.find(cameraID) != mostLag.end()) {
+            minLag = std::min(minLag, leastLag[cameraID]);
+            maxLag = std::max(maxLag, mostLag[cameraID]);
+          }
+        }
+        std::cout << "ReplayThread(): Min lag: " << minLag << "s, Max lag: " << maxLag << "s" << std::endl;
+      }
+      doReport = true;
+      lastReport = now;
+    }
 
     for (const auto& camera : cameras) {
       uint32_t cameraID = camera.cameraID;
@@ -967,7 +991,8 @@ void Storage_Module_Server::ReplayThread(std::vector<ReplayCameraDescription> ca
       }
 
       // If it is time to send the packet, do so and reset the packetTime so we'll grab another next time through.
-      if (packetTime && packetTime->elapsedTime <= m_replayElapsedTime->ElapsedTime()) {
+      double diff = packetTime->elapsedTime - m_replayElapsedTime->ElapsedTime();
+      if (packetTime && (diff <= 0)) {
         std::string ret = SendImageStreamPacketToClients(cameraID, packetTime->packet, m_replayFirstTime, m_replayInitialTime);
         if (!ret.empty()) {
           if (m_verbosity >= 0) {
@@ -975,6 +1000,16 @@ void Storage_Module_Server::ReplayThread(std::vector<ReplayCameraDescription> ca
           }
         }
         packetTime.reset();
+
+        // Keep track of the least and most lag for this camera.
+        if (doReport) {
+          // We're doing a report, so reset these
+          leastLag[cameraID] = -diff;
+          mostLag[cameraID] = -diff;
+        } else {
+          leastLag[cameraID] = std::min(leastLag[cameraID], -diff);
+          mostLag[cameraID] = std::max(mostLag[cameraID], -diff);
+        }
       }
     }
 
