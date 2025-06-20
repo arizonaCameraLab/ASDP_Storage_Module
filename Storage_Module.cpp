@@ -675,7 +675,8 @@ void Storage_Module_Server::doStartReplay(const CommandPacketStartReplay& comman
   // Open the camera stream files for each stream ID, add them round-robin along with camera IDs to a set of
   // vectors and start the stream replay threads with those vectors.
   m_stopReplayThreads = false;
-  static const size_t MAX_REPLAY_THREADS = 9;
+  // 21 threads was optimum on 6/20/2025, using a single thread per camera unless doing stereo.
+  static const size_t MAX_REPLAY_THREADS = 21;
   std::vector< std::vector<ReplayCameraDescription> > cameraBatches(
     std::min(cameras.size(), MAX_REPLAY_THREADS));
   for (uint32_t i = 1; i <= cameras.size(); i++) {
