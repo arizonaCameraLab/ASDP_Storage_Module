@@ -945,7 +945,7 @@ void Storage_Module_Server::ReplayThread(std::vector<ReplayCameraDescription> ca
   }
 
   // Keep track of the soonest time past desired and latest time past desired for each camera.
-  std::map<uint32_t, double> leastLag, mostLag;
+  std::map<uint32_t, double> mostLag;
   std::chrono::high_resolution_clock::time_point lastReport = {};
 
   // While we're not done, get packets from the input threads and send their messages to the clients of the
@@ -963,16 +963,14 @@ void Storage_Module_Server::ReplayThread(std::vector<ReplayCameraDescription> ca
     if (now - lastReport > std::chrono::milliseconds(10000)) {
       // Skip the first one when we just started.
       if ((now - lastReport < std::chrono::milliseconds(20000)) && (m_verbosity > 3)) {
-        double minLag = std::numeric_limits<double>::max();
         double maxLag = std::numeric_limits<double>::min();
         for (const auto& camera : cameras) {
           uint32_t cameraID = camera.cameraID;
-          if (leastLag.find(cameraID) != leastLag.end() && mostLag.find(cameraID) != mostLag.end()) {
-            minLag = std::min(minLag, leastLag[cameraID]);
+          if (mostLag.find(cameraID) != mostLag.end()) {
             maxLag = std::max(maxLag, mostLag[cameraID]);
           }
         }
-        std::cout << "ReplayThread(): Min lag: " << minLag << "s, Max lag: " << maxLag << "s" << std::endl;
+        std::cout << "ReplayThread(): Max lag: " << maxLag << "s" << std::endl;
       }
       doReport = true;
       lastReport = now;
@@ -1004,10 +1002,8 @@ void Storage_Module_Server::ReplayThread(std::vector<ReplayCameraDescription> ca
         // Keep track of the least and most lag for this camera.
         if (doReport) {
           // We're doing a report, so reset these
-          leastLag[cameraID] = -diff;
-          mostLag[cameraID] = -diff;
+          mostLag[cameraID] = 0;
         } else {
-          leastLag[cameraID] = std::min(leastLag[cameraID], -diff);
           mostLag[cameraID] = std::max(mostLag[cameraID], -diff);
         }
       }
