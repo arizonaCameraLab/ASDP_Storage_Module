@@ -959,21 +959,23 @@ void Storage_Module_Server::ReplayThread(std::vector<ReplayCameraDescription> ca
   while (!m_stopReplayThreads) {
 
     bool doReport = false;
-    auto now = std::chrono::high_resolution_clock::now();
-    if (now - lastReport > std::chrono::milliseconds(10000)) {
-      // Skip the first one when we just started.
-      if ((now - lastReport < std::chrono::milliseconds(20000)) && (m_verbosity > 3)) {
-        double maxLag = std::numeric_limits<double>::min();
-        for (const auto& camera : cameras) {
-          uint32_t cameraID = camera.cameraID;
-          if (mostLag.find(cameraID) != mostLag.end()) {
-            maxLag = std::max(maxLag, mostLag[cameraID]);
+    if (m_verbosity > 3) {
+      auto now = std::chrono::high_resolution_clock::now();
+      if (now - lastReport > std::chrono::milliseconds(10000)) {
+        // Skip the first one when we just started.
+        if (now - lastReport < std::chrono::milliseconds(20000)) {
+          double maxLag = std::numeric_limits<double>::min();
+          for (const auto& camera : cameras) {
+            uint32_t cameraID = camera.cameraID;
+            if (mostLag.find(cameraID) != mostLag.end()) {
+              maxLag = std::max(maxLag, mostLag[cameraID]);
+            }
           }
+          std::cout << "ReplayThread(): Max lag: " << maxLag << "s" << std::endl;
         }
-        std::cout << "ReplayThread(): Max lag: " << maxLag << "s" << std::endl;
+        doReport = true;
+        lastReport = now;
       }
-      doReport = true;
-      lastReport = now;
     }
 
     for (const auto& camera : cameras) {
