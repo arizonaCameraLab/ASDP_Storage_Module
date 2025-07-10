@@ -18,7 +18,7 @@ using namespace asdp;
 
 void usage(const std::string& programName)
 {
-  std::cerr << "Usage: " << programName << "<inFileName> <outFileName>" << std::endl;
+  std::cerr << "Usage: " << programName << " <inFileName> <outFileName>" << std::endl;
   std::cerr << "  <inFileName> - The name of the file to parse." << std::endl;
   std::cerr << "  <outFileName> - The name of the file to write the packed messages to." << std::endl;
 }
