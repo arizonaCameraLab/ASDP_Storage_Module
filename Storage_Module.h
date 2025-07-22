@@ -151,7 +151,7 @@ protected:
 
   // @brief Description of a camera to be handled by the replay thread.
   struct ReplayCameraDescription {
-    uint32_t cameraID;  ///< The ID of the camera.
+    uint32_t cameraID = 0;  ///< The ID of the camera, initially invalid.
     std::shared_ptr<ReceiverFile> receiver;  ///< The file to read packets from.
   };
 
