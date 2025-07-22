@@ -40,17 +40,28 @@ void ElapsedTimeWithPause::Reset()
 
 double ElapsedTimeWithPause::ElapsedTime() const
 {
-  std::chrono::time_point<std::chrono::steady_clock> now;
-  {
+  std::chrono::time_point<std::chrono::steady_clock> local_start_time;
+  std::chrono::duration<double> local_total_pause_time;
+  std::chrono::time_point<std::chrono::steady_clock> local_pause_start_time;
+  bool local_is_paused;
+
+  { // Hold the lock to get local copies, then release it before calculating elapsed time.
+    // This reduced thread contention on Linux.
     std::shared_lock<std::shared_mutex> lock(m_mutex);
-    if (is_paused) {
-      now = pause_start_time;
-    }
-    else {
-      now = std::chrono::steady_clock::now();
-    }
+    local_start_time = start_time;
+    local_total_pause_time = total_pause_time;
+    local_pause_start_time = pause_start_time;
+    local_is_paused = is_paused;
   }
-  std::chrono::duration<double> elapsed_time = now - start_time - total_pause_time;
+
+  std::chrono::time_point<std::chrono::steady_clock> now;
+  if (local_is_paused) {
+    now = local_pause_start_time;
+  }
+  else {
+    now = std::chrono::steady_clock::now();
+  }
+  std::chrono::duration<double> elapsed_time = now - local_start_time - local_total_pause_time;
   return elapsed_time.count();
 }
 
