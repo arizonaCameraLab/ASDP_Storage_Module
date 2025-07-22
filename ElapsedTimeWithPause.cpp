@@ -40,12 +40,15 @@ void ElapsedTimeWithPause::Reset()
 
 double ElapsedTimeWithPause::ElapsedTime() const
 {
-  std::shared_lock<std::shared_mutex> lock(m_mutex);
   std::chrono::time_point<std::chrono::steady_clock> now;
-  if (is_paused) {
-    now = pause_start_time;
-  } else {
-    now = std::chrono::steady_clock::now();
+  {
+    std::shared_lock<std::shared_mutex> lock(m_mutex);
+    if (is_paused) {
+      now = pause_start_time;
+    }
+    else {
+      now = std::chrono::steady_clock::now();
+    }
   }
   std::chrono::duration<double> elapsed_time = now - start_time - total_pause_time;
   return elapsed_time.count();
