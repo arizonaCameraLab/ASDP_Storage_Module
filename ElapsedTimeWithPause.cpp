@@ -3,7 +3,7 @@
  */
 
 #include <thread>
-#include <mutex>
+#include <atomic>
 #include "ElapsedTimeWithPause.h"
 using namespace asdp;
 
@@ -14,54 +14,48 @@ ElapsedTimeWithPause::ElapsedTimeWithPause()
 
 void ElapsedTimeWithPause::Pause()
 {
-  std::unique_lock<std::shared_mutex> lock(m_mutex);
-  if (!is_paused) {
-    is_paused = true;
-    pause_start_time = std::chrono::steady_clock::now();
+  std::shared_ptr<State> oldState = std::atomic_load(&m_state);
+  std::shared_ptr<State> newState = std::make_shared<State>();
+  *newState = *oldState; // Make a copy of the current state.
+  if (!newState->is_paused) {
+    newState->is_paused = true;
+    newState->pause_start_time = std::chrono::steady_clock::now();
   }
+  std::atomic_store(&m_state, newState);
 }
 
 void ElapsedTimeWithPause::Resume()
 {
-  std::unique_lock<std::shared_mutex> lock(m_mutex);
-  if (is_paused) {
-    is_paused = false;
-    total_pause_time += std::chrono::steady_clock::now() - pause_start_time;
+  std::shared_ptr<State> oldState = std::atomic_load(&m_state);
+  std::shared_ptr<State> newState = std::make_shared<State>();
+  *newState = *oldState; // Make a copy of the current state.
+  if (newState->is_paused) {
+    newState->is_paused = false;
+    newState->total_pause_time += std::chrono::steady_clock::now() - newState->pause_start_time;
   }
+  std::atomic_store(&m_state, newState);
 }
 
 void ElapsedTimeWithPause::Reset()
 {
-  std::unique_lock<std::shared_mutex> lock(m_mutex);
-  start_time = std::chrono::steady_clock::now();
-  total_pause_time = std::chrono::duration<double>::zero();
-  is_paused = false;
+  std::shared_ptr<State> newState = std::make_shared<State>();
+  newState->start_time = std::chrono::steady_clock::now();
+  newState->total_pause_time = std::chrono::duration<double>::zero();
+  newState->is_paused = false;
+  std::atomic_store(&m_state, newState);
 }
 
 double ElapsedTimeWithPause::ElapsedTime() const
 {
-  std::chrono::time_point<std::chrono::steady_clock> local_start_time;
-  std::chrono::duration<double> local_total_pause_time;
-  std::chrono::time_point<std::chrono::steady_clock> local_pause_start_time;
-  bool local_is_paused;
-
-  { // Hold the lock to get local copies, then release it before calculating elapsed time.
-    // This reduced thread contention on Linux.
-    std::shared_lock<std::shared_mutex> lock(m_mutex);
-    local_start_time = start_time;
-    local_total_pause_time = total_pause_time;
-    local_pause_start_time = pause_start_time;
-    local_is_paused = is_paused;
-  }
-
+  // Make a local copy of the state to avoid having its contents be changed non-atomically by another thread.
+  std::shared_ptr<State> local_state = std::atomic_load(&m_state);
   std::chrono::time_point<std::chrono::steady_clock> now;
-  if (local_is_paused) {
-    now = local_pause_start_time;
-  }
-  else {
+  if (local_state->is_paused) {
+    now = local_state->pause_start_time;
+  } else {
     now = std::chrono::steady_clock::now();
   }
-  std::chrono::duration<double> elapsed_time = now - local_start_time - local_total_pause_time;
+  std::chrono::duration<double> elapsed_time = now - local_state->start_time - local_state->total_pause_time;
   return elapsed_time.count();
 }
 

@@ -14,7 +14,7 @@
 
 #include <chrono>
 #include <string>
-#include <shared_mutex>
+#include <memory>
 
 namespace asdp {
 
@@ -42,11 +42,25 @@ namespace asdp {
     static std::string Test();
 
   protected:
-    std::chrono::time_point<std::chrono::steady_clock> start_time;
-    std::chrono::duration<double> total_pause_time;
-    bool is_paused;
-    std::chrono::time_point<std::chrono::steady_clock> pause_start_time;
-    mutable std::shared_mutex m_mutex;
+    // Using a mutex (even a shared mutex) caused starvation of the unique_lock on Linux when
+    // trying to pause and resume the timer by the multiple camera shared_lock calls for read
+    // access because write locks are not prioritized on Linux in this case.  To deal with that
+    // without resorting to Boost, we use a shared_ptr to a state object that holds the state of the timer.
+    // This pointer is atomic so that we can safely read and write it from multiple threads without
+    // needing to lock it. The resulting pointed-to state object provides a consistent state that does
+    // not change while reading it, even though the m_state pointer itself may be replaced while a
+    // function is still using the old state.
+
+    typedef struct {
+      std::chrono::time_point<std::chrono::steady_clock> start_time;
+      std::chrono::duration<double> total_pause_time;
+      bool is_paused;
+      std::chrono::time_point<std::chrono::steady_clock> pause_start_time;
+    } State;
+
+    /// @brief Only access this variable using std::atomic_load and std::atomic_store.
+    // This requires C++17 and later, which can handle calling these functions on the non-atomic shared_ptr type.
+    std::shared_ptr<State> m_state;
   };
 
 } // namespace asdp
