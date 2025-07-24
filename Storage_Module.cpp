@@ -2299,7 +2299,10 @@ Storage_Module::PersistentState::PersistentState(const std::string& filename)
   }
 
   // Read the file and set the values.  If we can't read one of them, keep the default value.
-  LoadFromFile();
+  if (!LoadFromFile()) {
+    std::cerr << "Storage_Module::PersistentState::PersistentState() failed to load from file " << filename
+      << " (using default configuration values)" << std::endl;
+  }
 }
 
 bool Storage_Module::PersistentState::LoadFromFile()
