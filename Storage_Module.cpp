@@ -1889,6 +1889,11 @@ Status Storage_Module::StartStoring()
 {
   std::lock_guard<std::mutex> lock(m_storageMutex);
 
+  // If we are already storing, then just return OKAY.
+  if (m_writingToID != 0) {
+    return OKAY;
+  }
+
   // Ensure that we are connected to a server before we start storing (and that we have storage server pointers).
   if ((m_stream == nullptr) || (m_storageSenders.size() == 0)) {
     return OKAY;
