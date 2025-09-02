@@ -279,6 +279,9 @@ protected:
   /// The name of the network interface to listen on for outgoing connections.
   std::string m_nicNameOut;
 
+  /// The serial number of the device we are connected to.
+  uint32_t m_serial;
+
   //=============================================================================
   /// Persistent state that is stored to disk and loaded from disk.
 
