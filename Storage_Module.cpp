@@ -1785,7 +1785,7 @@ void Storage_Module::ClientThread()
       // We are not connected to a server, so look for one in the list of identified servers.
       // The Discovery thread is already running, so we don't need to start it here.
       // We watch for a server to show up in the discovery list, then we connect to it.
-      std::vector<std::string> servers;
+      std::map<uint32_t, std::string> servers;
       Status status = IdentifiedServers(servers);
       if (status != OKAY) {
         // We're broken, so we can't do anything else.  Just set the status and return.
@@ -1795,14 +1795,15 @@ void Storage_Module::ClientThread()
       if (servers.size() > 0) {
         // We found a server, so connect to it.
         uint16_t major, minor, patch;
-        Status status = ConnectToServer(servers[0], major, minor, patch);
+        Status status = ConnectToServer(servers.begin()->second, major, minor, patch);
         if (status != OKAY) {
           // Could not connect to the server.  Skip this round and try again later.
           std::this_thread::sleep_for(std::chrono::milliseconds(100));
           continue;
         }
+        m_serial = servers.begin()->first;
         if (m_verbosity > 1) {
-          std::cout << " Storage_Module::Connected to server " << servers[0] << ", serial# " << m_serial << std::endl;
+          std::cout << " Storage_Module::Connected to server " << servers.begin()->second << ", serial# " << m_serial << std::endl;
         }
 
         // See if we already have a server with this serial number in our list of servers.
