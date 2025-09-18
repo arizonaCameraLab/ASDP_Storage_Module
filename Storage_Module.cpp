@@ -2028,9 +2028,9 @@ Status Storage_Module::ConfigureClientConnection(const MessageState& response)
       default:
         // We never heard of this feature, so we can't enable it.
         if (m_verbosity >= 0) {
-          std::cerr << "Storage_Module::Unknown feature ID: " << feature << std::endl;
+          std::cerr << "Warning: Storage_Module::Unknown feature ID: " << feature << std::endl;
         }
-        return UNEXPECTED_INTERNAL_STATE;
+        return OKAY;
     }
   }
 
