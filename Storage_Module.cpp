@@ -2030,7 +2030,7 @@ Status Storage_Module::ConfigureClientConnection(const MessageState& response)
         if (m_verbosity >= 0) {
           std::cerr << "Warning: Storage_Module::Unknown feature ID: " << feature << std::endl;
         }
-        return OKAY;
+        break;
     }
   }
 
