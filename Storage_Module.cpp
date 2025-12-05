@@ -692,7 +692,7 @@ void Storage_Module_Server::doStartReplay(const CommandPacketStartReplay& comman
   }
 
   // Start the analysis API thread if we have an analysis directory. See if it exists and is a directory.
-  std::string anaDir = m_parent->m_storageRoot + "/" + std::to_string(m_serial) + "/analysis";
+  std::string anaDir = m_parent->m_storageRoot + "/" + std::to_string(m_serial) + "/" + std::to_string(streamID) + "/analysis";
   if (std::filesystem::exists(anaDir) && std::filesystem::is_directory(anaDir)) {
     m_stopAnalysisAPIThread = false;
     m_analysisAPIThread = std::thread(&Storage_Module_Server::AnalysisAPIMessagesThreadFunction, this, anaDir);
@@ -1545,7 +1545,7 @@ static Time stringTimeToTime(const std::string& timeStr)
   // Get the time field.
   std::array<uint32_t, 2> msgTimeArray;
   try {
-    msgTimeArray = j.at("time").get< std::array<uint32_t, 2> >();
+    msgTimeArray = j.at("Time").get< std::array<uint32_t, 2> >();
   } catch (const std::exception& e) {
     std::cerr << "stringTimeToTime(): Error getting time field from JSON object: " << e.what() << std::endl;
     return { std::numeric_limits<uint32_t>::max(), std::numeric_limits<uint32_t>::max() };
@@ -1572,7 +1572,7 @@ static std::string adjustTimeInJSONString(const std::string& jsonString, const T
 
 void Storage_Module_Server::AnalysisAPIMessagesThreadFunction(std::string directory)
 {
-  if (m_verbosity > 2) {
+  if (m_verbosity > 1) {
     std::cout << "  Storage_Module_Server::AnalysisAPIMessagesThreadFunction(): Starting thread" << std::endl;
   }
 
@@ -1631,7 +1631,7 @@ void Storage_Module_Server::AnalysisAPIMessagesThreadFunction(std::string direct
   std::vector< std::shared_ptr<JSONStringReceiver> > jsonReceivers;
   for (const auto& messageFile : messageFiles) {
     std::shared_ptr<JSONStringReceiver> receiver;
-    status = JSONStringReceiver::Create(messageFile.string(), receiver);
+    status = JSONStringReceiver::Create("file://" + messageFile.string(), receiver);
     if (status != OKAY) {
       std::cerr << "  Storage_Module_Server::AnalysisAPIMessagesThreadFunction(): Error creating JSONStringReceiver for file "
         << messageFile << ": " << ErrorMessage(status) << std::endl;
@@ -1644,7 +1644,7 @@ void Storage_Module_Server::AnalysisAPIMessagesThreadFunction(std::string direct
   std::vector<std::string> currentStrings(jsonReceivers.size(), "");
   for (size_t i = 0; i < jsonReceivers.size(); i++) {
     Status status = jsonReceivers[i]->Receive(0.0, currentStrings[i]);
-    if (status != OKAY && status != TIMEOUT) {
+    if (status != OKAY) {
       std::cerr << "  Storage_Module_Server::AnalysisAPIMessagesThreadFunction(): Error receiving initial string from receiver "
         << i << ": " << ErrorMessage(status) << std::endl;
     }
@@ -1663,12 +1663,11 @@ void Storage_Module_Server::AnalysisAPIMessagesThreadFunction(std::string direct
 
     // Go through all receivers and see if any have a string ready to send. If so, read the next string
     // and see if it is ready as well.
-    Time now;
-    Status status = m_timer->GetCoreTime(now);
+    Time nowInReplay = m_replayFirstTime + m_replayElapsedTime->ElapsedTime();
     for (size_t i = 0; i < jsonReceivers.size(); i++) {
       auto& recv = jsonReceivers[i];
       auto& str = currentStrings[i];
-      while (currentTimes[i] <= now) {
+      while (currentTimes[i] <= nowInReplay) {
         // Adjust the time in the string based on the desired stream start time.
         Time adjustedTime = AdjustTimeForReplay(currentTimes[i]);
         std::string adjustedString = adjustTimeInJSONString(str, adjustedTime);
