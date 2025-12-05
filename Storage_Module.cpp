@@ -1698,7 +1698,7 @@ void Storage_Module_Server::AnalysisAPIMessagesThreadFunction(std::string direct
     std::this_thread::sleep_for(std::chrono::milliseconds(1));
   }
 
-  if (m_verbosity > 2) {
+  if (m_verbosity > 1) {
     std::cout << "  Storage_Module_Server::AnalysisAPIMessagesThreadFunction(): Ending thread" << std::endl;
   }
 }
