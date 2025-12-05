@@ -20,6 +20,7 @@
 #include <shared_mutex>
 #include <list>
 #include <atomic>
+#include <thread>
 
 namespace asdp {
 
@@ -51,6 +52,24 @@ protected:
   /// The parent object that created this server.
   Storage_Module *m_parent;
 
+  /// The NIC name to use for outgoing connections.
+  std::string m_nicName;
+
+  /// Server to use to send Analysis API messages, if any.
+  std::shared_ptr<JSONStringSender> m_analysisAPISender;
+
+  //=============================================================================
+  // Analysis API-related state and methods.
+
+  /// @brief Thread function to handle Analysis API messages.
+  /// @param directory Directory to read config.json and Analysis API .json files from.
+  void AnalysisAPIMessagesThreadFunction(std::string directory);
+  std::thread m_analysisAPIThread;
+
+  /// Atomic Boolean to tell the Analysis API thread to stop.
+  std::atomic_bool m_stopAnalysisAPIThread;
+
+  //=============================================================================
   /// @brief Handle operations that must be done every loop, like checking if our thread should stop.
   void doEveryLoop() override;
   std::chrono::steady_clock::time_point m_lastCheckDiskSpace{};

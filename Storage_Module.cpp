@@ -7,6 +7,7 @@
 #include <iostream>
 #include <algorithm>
 #include <limits>
+#include <climits>
 #include <filesystem>
 #include <thread>
 #include <atomic>
@@ -52,6 +53,7 @@ Storage_Module_Server::Storage_Module_Server(Storage_Module* parent, uint32_t se
     uint16_t sendPort, uint16_t listenPort, uint32_t maxPayloadSize, int verbosity)
   : CoreServerBase(serialNumber, NicName, sendPort, listenPort, maxPayloadSize, verbosity)
   , m_parent(parent)
+  , m_nicName(NicName)
   , m_replayPaused(false)
   , m_stopReplayThreads(false)
   , m_replayElapsedTime(std::make_shared<ElapsedTimeWithPause>())
@@ -690,6 +692,13 @@ void Storage_Module_Server::doStartReplay(const CommandPacketStartReplay& comman
     m_replayThreads[i] = std::thread(&Storage_Module_Server::ReplayThread, this, cameraBatches[i]);
   }
 
+  // Start the analysis API thread if we have an analysis directory. See if it exists and is a directory.
+  std::string anaDir = m_parent->m_storageRoot + "/" + std::to_string(m_serial) + "/analysis";
+  if (std::filesystem::exists(anaDir) && std::filesystem::is_directory(anaDir)) {
+    m_stopAnalysisAPIThread = false;
+    m_analysisAPIThread = std::thread(&Storage_Module_Server::AnalysisAPIMessagesThreadFunction, this, anaDir);
+  }
+
   // Switching away from live mode and not paused.
   m_replayAtEnd = false;
   m_camerasStreaming = false;
@@ -846,6 +855,12 @@ void Storage_Module_Server::doStopReplay(const CommandPacketStopReplay& command,
   // Do nothing if we're not replaying.
   if (!m_replaying) {
     return;
+  }
+
+  // Stop our analysis API thread if it is running.
+  m_stopAnalysisAPIThread = true;
+  if (m_analysisAPIThread.joinable()) {
+    m_analysisAPIThread.join();
   }
 
   // Stop all of our per-camera receive threads.
@@ -1513,6 +1528,181 @@ std::string Storage_Module_Server::SendImageStreamPacketToClients(uint32_t camer
 
   // No errors.
   return "";
+}
+
+/// @brief Convert a JSON string containing a time field to a Time struct.
+/// @param timeStr The JSON string containing a time field.
+/// @return The Time struct, returned as {ULONG_MAX, ULONG_MAX} on error.
+static Time stringTimeToTime(const std::string& timeStr)
+{
+  // Parse the JSON string.
+  json j;
+  try {
+    j = json::parse(timeStr);
+  } catch (const std::exception& e) {
+    std::cerr << "stringTimeToTime(): Error parsing JSON string: " << e.what() << std::endl;
+    return { ULONG_MAX, ULONG_MAX };
+  }
+  // Get the time field.
+  std::array<uint32_t, 2> msgTimeArray;
+  try {
+    msgTimeArray = j.at("time").get< std::array<uint32_t, 2> >();
+  } catch (const std::exception& e) {
+    std::cerr << "stringTimeToTime(): Error getting time field from JSON object: " << e.what() << std::endl;
+    return { ULONG_MAX, ULONG_MAX };
+  }
+  Time msgTime = { msgTimeArray[0], msgTimeArray[1] };
+  return msgTime;
+}
+
+static std::string adjustTimeInJSONString(const std::string& jsonString, const Time& adjustedTime)
+{
+  // Parse the JSON string.
+  json j;
+  try {
+    j = json::parse(jsonString);
+  } catch (const std::exception& e) {
+    std::cerr << "adjustTimeInJSONString(): Error parsing JSON string: " << e.what() << std::endl;
+    return jsonString;
+  }
+  // Set the time field.
+  j["time"] = { adjustedTime.seconds, adjustedTime.microseconds };
+  // Return the modified JSON string.
+  return j.dump();
+}
+
+void Storage_Module_Server::AnalysisAPIMessagesThreadFunction(std::string directory)
+{
+  if (m_verbosity > 2) {
+    std::cout << "  Storage_Module_Server::AnalysisAPIMessagesThreadFunction(): Starting thread" << std::endl;
+  }
+
+  // Find and parse the file named config.json in the specified directory.  If it does not exist, print an
+  // error and return.
+  std::filesystem::path configPath = std::filesystem::path(directory) / "config.json";
+  if (!std::filesystem::exists(configPath)) {
+    std::cerr << "  Storage_Module_Server::AnalysisAPIMessagesThreadFunction(): Config file not found: " << configPath << std::endl;
+    return;
+  }
+  json j;
+  try {
+    std::ifstream configFile(configPath);
+    configFile >> j;
+  } catch (const std::exception& e) {
+    std::cerr << "  Storage_Module_Server::AnalysisAPIMessagesThreadFunction(): Error parsing config file: " << e.what() << std::endl;
+    return;
+  }
+
+  // Find the port number to listen to by looking for the field "port" in the JSON object.
+  uint16_t port = 0;
+  try {
+    port = j.at("port").get<uint16_t>();
+  } catch (const std::exception& e) {
+    std::cerr << "  Storage_Module_Server::AnalysisAPIMessagesThreadFunction(): Error getting port from config file: " << e.what() << std::endl;
+    return;
+  }
+  if (port == 0) {
+    std::cerr << "  Storage_Module_Server::AnalysisAPIMessagesThreadFunction(): Invalid port number 0 in config file" << std::endl;
+    return;
+  }
+
+  // Construct a JSONStringSender to send messages to clients connecting to this port.
+  std::shared_ptr<JSONStringSender> jsonSender;
+  std::string url = "tcp://" + m_nicName + ":" + std::to_string(port);
+  Status status = JSONStringSender::Create(url, jsonSender);
+  if (status != OKAY) {
+    std::cerr << "  Storage_Module_Server::AnalysisAPIMessagesThreadFunction(): Error creating JSONStringSender: " << ErrorMessage(status) << std::endl;
+    return;
+  }
+
+  // Get a vector of all files in the directory that end with .json (any case) but are not config.json.
+  std::vector<std::filesystem::path> messageFiles;
+  for (const auto& entry : std::filesystem::directory_iterator(directory)) {
+    if (entry.is_regular_file()) {
+      std::string filename = entry.path().filename().string();
+      std::string extension = entry.path().extension().string();
+      std::transform(extension.begin(), extension.end(), extension.begin(), ::tolower);
+      if (extension == ".json" && filename != "config.json") {
+        messageFiles.push_back(entry.path());
+      }
+    }
+  }
+
+  // Construct a vector of JSONString receivers, one for each file.
+  std::vector< std::shared_ptr<JSONStringReceiver> > jsonReceivers;
+  for (const auto& messageFile : messageFiles) {
+    std::shared_ptr<JSONStringReceiver> receiver;
+    status = JSONStringReceiver::Create(messageFile.string(), receiver);
+    if (status != OKAY) {
+      std::cerr << "  Storage_Module_Server::AnalysisAPIMessagesThreadFunction(): Error creating JSONStringReceiver for file "
+        << messageFile << ": " << ErrorMessage(status) << std::endl;
+      continue;
+    }
+    jsonReceivers.push_back(receiver);
+  }
+
+  // Make a vector of the first string from each receiver. If there is no available string, leave it empty.
+  std::vector<std::string> currentStrings(jsonReceivers.size(), "");
+  for (size_t i = 0; i < jsonReceivers.size(); i++) {
+    Status status = jsonReceivers[i]->Receive(0.0, currentStrings[i]);
+    if (status != OKAY && status != TIMEOUT) {
+      std::cerr << "  Storage_Module_Server::AnalysisAPIMessagesThreadFunction(): Error receiving initial string from receiver "
+        << i << ": " << ErrorMessage(status) << std::endl;
+    }
+  }
+
+  // Make a vector of times for each current string.
+  std::vector<Time> currentTimes(jsonReceivers.size(), { 0, 0 });
+  for (size_t i = 0; i < jsonReceivers.size(); i++) {
+    if (!currentStrings[i].empty()) {
+      currentTimes[i] = stringTimeToTime(currentStrings[i]);
+    }
+  }
+
+  // Loop until we are told to stop, adjusting times and sending events when they are ready.
+  while (!m_stopAnalysisAPIThread) {
+
+    // Go through all receivers and see if any have a string ready to send. If so, read the next string
+    // and see if it is ready as well.
+    Time now;
+    Status status = m_timer->GetCoreTime(now);
+    for (size_t i = 0; i < jsonReceivers.size(); i++) {
+      auto& recv = jsonReceivers[i];
+      auto& str = currentStrings[i];
+      while (currentTimes[i] <= now) {
+        // Adjust the time in the string based on the desired stream start time.
+        Time adjustedTime = AdjustTimeForReplay(currentTimes[i]);
+        std::string adjustedString = adjustTimeInJSONString(str, adjustedTime);
+
+        // Send the adjusted string.
+        jsonSender->Send(adjustedString);
+
+        // Get the next string from the receiver and record its time.
+        status = recv->Receive(0.0, str);
+        if (status == TIMEOUT) {
+          // No more strings available right now.
+          str = "";
+          currentTimes[i] = { ULONG_MAX, ULONG_MAX };
+          break;
+        }
+        if (status != OKAY) {
+          std::cerr << "  Storage_Module_Server::AnalysisAPIMessagesThreadFunction(): Error receiving string from receiver "
+            << i << ": " << ErrorMessage(status) << std::endl;
+          str = "";
+          currentTimes[i] = { ULONG_MAX, ULONG_MAX };
+          break;
+        }
+        currentTimes[i] = stringTimeToTime(str);
+      }
+    }
+
+    // Sleep for a short time to avoid busy waiting.
+    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+  }
+
+  if (m_verbosity > 2) {
+    std::cout << "  Storage_Module_Server::AnalysisAPIMessagesThreadFunction(): Ending thread" << std::endl;
+  }
 }
 
 Storage_Module::Storage_Module(const std::string& NicNameIn, const std::string& NicNameOut,
