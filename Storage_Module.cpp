@@ -1573,14 +1573,16 @@ static std::string adjustTimeInJSONString(const std::string& jsonString, const T
 void Storage_Module_Server::AnalysisAPIMessagesThreadFunction(std::string directory)
 {
   if (m_verbosity > 1) {
-    std::cout << "  Storage_Module_Server::AnalysisAPIMessagesThreadFunction(): Starting thread" << std::endl;
+    std::cout << " Storage_Module_Server::AnalysisAPIMessagesThreadFunction(): Starting thread" << std::endl;
   }
 
   // Find and parse the file named config.json in the specified directory.  If it does not exist, print an
   // error and return.
   std::filesystem::path configPath = std::filesystem::path(directory) / "config.json";
   if (!std::filesystem::exists(configPath)) {
-    std::cerr << "  Storage_Module_Server::AnalysisAPIMessagesThreadFunction(): Config file not found: " << configPath << std::endl;
+    if (m_verbosity > 0) {
+      std::cerr << "  Storage_Module_Server::AnalysisAPIMessagesThreadFunction(): Config file not found: " << configPath << std::endl;
+    }
     return;
   }
   json j;
@@ -1588,7 +1590,9 @@ void Storage_Module_Server::AnalysisAPIMessagesThreadFunction(std::string direct
     std::ifstream configFile(configPath);
     configFile >> j;
   } catch (const std::exception& e) {
-    std::cerr << "  Storage_Module_Server::AnalysisAPIMessagesThreadFunction(): Error parsing config file: " << e.what() << std::endl;
+    if (m_verbosity > 0) {
+      std::cerr << "  Storage_Module_Server::AnalysisAPIMessagesThreadFunction(): Error parsing config file: " << e.what() << std::endl;
+    }
     return;
   }
 
@@ -1597,11 +1601,15 @@ void Storage_Module_Server::AnalysisAPIMessagesThreadFunction(std::string direct
   try {
     port = j.at("port").get<uint16_t>();
   } catch (const std::exception& e) {
-    std::cerr << "  Storage_Module_Server::AnalysisAPIMessagesThreadFunction(): Error getting port from config file: " << e.what() << std::endl;
+    if (m_verbosity > 0) {
+      std::cerr << "  Storage_Module_Server::AnalysisAPIMessagesThreadFunction(): Error getting port from config file: " << e.what() << std::endl;
+    }
     return;
   }
   if (port == 0) {
-    std::cerr << "  Storage_Module_Server::AnalysisAPIMessagesThreadFunction(): Invalid port number 0 in config file" << std::endl;
+    if (m_verbosity > 0) {
+      std::cerr << "  Storage_Module_Server::AnalysisAPIMessagesThreadFunction(): Invalid port number 0 in config file" << std::endl;
+    }
     return;
   }
 
@@ -1610,7 +1618,9 @@ void Storage_Module_Server::AnalysisAPIMessagesThreadFunction(std::string direct
   std::string url = "tcp://" + m_nicName + ":" + std::to_string(port);
   Status status = JSONStringSender::Create(url, jsonSender);
   if (status != OKAY) {
-    std::cerr << "  Storage_Module_Server::AnalysisAPIMessagesThreadFunction(): Error creating JSONStringSender: " << ErrorMessage(status) << std::endl;
+    if (m_verbosity > 0) {
+      std::cerr << "  Storage_Module_Server::AnalysisAPIMessagesThreadFunction(): Error creating JSONStringSender: " << ErrorMessage(status) << std::endl;
+    }
     return;
   }
 
@@ -1633,8 +1643,10 @@ void Storage_Module_Server::AnalysisAPIMessagesThreadFunction(std::string direct
     std::shared_ptr<JSONStringReceiver> receiver;
     status = JSONStringReceiver::Create("file://" + messageFile.string(), receiver);
     if (status != OKAY) {
-      std::cerr << "  Storage_Module_Server::AnalysisAPIMessagesThreadFunction(): Error creating JSONStringReceiver for file "
-        << messageFile << ": " << ErrorMessage(status) << std::endl;
+      if (m_verbosity > 0) {
+        std::cerr << "  Storage_Module_Server::AnalysisAPIMessagesThreadFunction(): Error creating JSONStringReceiver for file "
+          << messageFile << ": " << ErrorMessage(status) << std::endl;
+      }
       continue;
     }
     jsonReceivers.push_back(receiver);
@@ -1645,8 +1657,10 @@ void Storage_Module_Server::AnalysisAPIMessagesThreadFunction(std::string direct
   for (size_t i = 0; i < jsonReceivers.size(); i++) {
     Status status = jsonReceivers[i]->Receive(0.0, currentStrings[i]);
     if (status != OKAY) {
-      std::cerr << "  Storage_Module_Server::AnalysisAPIMessagesThreadFunction(): Error receiving initial string from receiver "
-        << i << ": " << ErrorMessage(status) << std::endl;
+      if (m_verbosity > 0) {
+        std::cerr << "  Storage_Module_Server::AnalysisAPIMessagesThreadFunction(): Error receiving initial string from receiver "
+          << i << ": " << ErrorMessage(status) << std::endl;
+      }
     }
   }
 
@@ -1684,8 +1698,10 @@ void Storage_Module_Server::AnalysisAPIMessagesThreadFunction(std::string direct
           break;
         }
         if (status != OKAY) {
-          std::cerr << "  Storage_Module_Server::AnalysisAPIMessagesThreadFunction(): Error receiving string from receiver "
-            << i << ": " << ErrorMessage(status) << std::endl;
+          if (m_verbosity > 0) {
+            std::cerr << "  Storage_Module_Server::AnalysisAPIMessagesThreadFunction(): Error receiving string from receiver "
+              << i << ": " << ErrorMessage(status) << std::endl;
+          }
           str = "";
           currentTimes[i] = { std::numeric_limits<uint32_t>::max(), std::numeric_limits<uint32_t>::max() };
           break;
@@ -1699,7 +1715,7 @@ void Storage_Module_Server::AnalysisAPIMessagesThreadFunction(std::string direct
   }
 
   if (m_verbosity > 1) {
-    std::cout << "  Storage_Module_Server::AnalysisAPIMessagesThreadFunction(): Ending thread" << std::endl;
+    std::cout << " Storage_Module_Server::AnalysisAPIMessagesThreadFunction(): Ending thread" << std::endl;
   }
 }
 
