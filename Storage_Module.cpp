@@ -1681,14 +1681,14 @@ void Storage_Module_Server::AnalysisAPIMessagesThreadFunction(std::string direct
         if (status == TIMEOUT) {
           // No more strings available right now.
           str = "";
-          currentTimes[i] = { ULONG_MAX, ULONG_MAX };
+          currentTimes[i] = { std::numeric_limits<uint32_t>::max(), std::numeric_limits<uint32_t>::max() };
           break;
         }
         if (status != OKAY) {
           std::cerr << "  Storage_Module_Server::AnalysisAPIMessagesThreadFunction(): Error receiving string from receiver "
             << i << ": " << ErrorMessage(status) << std::endl;
           str = "";
-          currentTimes[i] = { ULONG_MAX, ULONG_MAX };
+          currentTimes[i] = { std::numeric_limits<uint32_t>::max(), std::numeric_limits<uint32_t>::max() };
           break;
         }
         currentTimes[i] = stringTimeToTime(str);
