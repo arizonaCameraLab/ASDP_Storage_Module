@@ -7,7 +7,6 @@
 #include <iostream>
 #include <algorithm>
 #include <limits>
-#include <climits>
 #include <filesystem>
 #include <thread>
 #include <atomic>
@@ -1532,7 +1531,7 @@ std::string Storage_Module_Server::SendImageStreamPacketToClients(uint32_t camer
 
 /// @brief Convert a JSON string containing a time field to a Time struct.
 /// @param timeStr The JSON string containing a time field.
-/// @return The Time struct, returned as {ULONG_MAX, ULONG_MAX} on error.
+/// @return The Time struct, returned as the last possible time on error.
 static Time stringTimeToTime(const std::string& timeStr)
 {
   // Parse the JSON string.
@@ -1541,7 +1540,7 @@ static Time stringTimeToTime(const std::string& timeStr)
     j = json::parse(timeStr);
   } catch (const std::exception& e) {
     std::cerr << "stringTimeToTime(): Error parsing JSON string: " << e.what() << std::endl;
-    return { ULONG_MAX, ULONG_MAX };
+    return { std::numeric_limits<uint32_t>::max(), std::numeric_limits<uint32_t>::max() };
   }
   // Get the time field.
   std::array<uint32_t, 2> msgTimeArray;
@@ -1549,7 +1548,7 @@ static Time stringTimeToTime(const std::string& timeStr)
     msgTimeArray = j.at("time").get< std::array<uint32_t, 2> >();
   } catch (const std::exception& e) {
     std::cerr << "stringTimeToTime(): Error getting time field from JSON object: " << e.what() << std::endl;
-    return { ULONG_MAX, ULONG_MAX };
+    return { std::numeric_limits<uint32_t>::max(), std::numeric_limits<uint32_t>::max() };
   }
   Time msgTime = { msgTimeArray[0], msgTimeArray[1] };
   return msgTime;
