@@ -82,6 +82,38 @@ Storage_Module_Server::Storage_Module_Server(Storage_Module* parent, uint32_t se
       ConfigureStateFromStoredState();
     }
   }
+
+  // See if there is a config.json file in the storage root directory for this server.
+  // If so, see if it has an "analysisPort" entry. If so, open a JSONStringSender on that port.
+  std::string configFileName = m_parent->m_storageRoot + "/" + std::to_string(m_serial) + "/config.json";
+  if (std::filesystem::exists(configFileName)) {
+    try {
+      std::ifstream configFile(configFileName);
+      json configJson;
+      configFile >> configJson;
+      if (configJson.contains("analysisPort")) {
+        uint16_t analysisPort;
+        analysisPort = configJson["analysisPort"];
+        std::string url = "tcp://" + m_nicName + ":" + std::to_string(analysisPort);
+        Status status = JSONStringSender::Create(url, m_analysisAPISender);
+        if (status != OKAY) {
+          if (m_verbosity > 0) {
+            std::cerr << "  Storage_Module_Server::AnalysisAPIMessagesThreadFunction(): Error creating JSONStringSender: " << ErrorMessage(status) << std::endl;
+          }
+          return;
+        }
+        if (m_verbosity > 1) {
+          std::cout << " Storage_Module::Server " << serialNumber << " created Analysis API sender created on port " << analysisPort << std::endl;
+        }
+      }
+    }
+    catch (const std::exception& e) {
+      if (m_verbosity >= 0) {
+        std::cerr << "Storage_Module_Server::Storage_Module_Server(): Error reading config.json: " << e.what() << std::endl;
+      }
+    }
+  }
+
 }
 
 Storage_Module_Server::~Storage_Module_Server()
@@ -92,6 +124,9 @@ Storage_Module_Server::~Storage_Module_Server()
       doStopReplay(CommandPacketStopReplay(), client);
     }
   }
+
+  // Tear down our analysis API sender if we have one.
+  m_analysisAPISender.reset();
 }
 
 Status Storage_Module_Server::ConfigureStateFromStoredState()
@@ -1572,66 +1607,28 @@ static std::string adjustTimeInJSONString(const std::string& jsonString, const T
 
 void Storage_Module_Server::AnalysisAPIMessagesThreadFunction(std::string directory)
 {
+  Status status;
+
   if (m_verbosity > 1) {
     std::cout << " Storage_Module_Server::AnalysisAPIMessagesThreadFunction(): Starting thread" << std::endl;
   }
 
-  // Find and parse the file named config.json in the specified directory.  If it does not exist, print an
-  // error and return.
-  std::filesystem::path configPath = std::filesystem::path(directory) / "config.json";
-  if (!std::filesystem::exists(configPath)) {
+  // Ensure that we have a JSONStringSender to send messages to the Analysis API.
+  if (m_analysisAPISender == nullptr) {
     if (m_verbosity > 0) {
-      std::cerr << "  Storage_Module_Server::AnalysisAPIMessagesThreadFunction(): Config file not found: " << configPath << std::endl;
-    }
-    return;
-  }
-  json j;
-  try {
-    std::ifstream configFile(configPath);
-    configFile >> j;
-  } catch (const std::exception& e) {
-    if (m_verbosity > 0) {
-      std::cerr << "  Storage_Module_Server::AnalysisAPIMessagesThreadFunction(): Error parsing config file: " << e.what() << std::endl;
+      std::cerr << "  Storage_Module_Server::AnalysisAPIMessagesThreadFunction(): No Analysis API JSONStringSender available, exiting thread" << std::endl;
     }
     return;
   }
 
-  // Find the port number to listen to by looking for the field "port" in the JSON object.
-  uint16_t port = 0;
-  try {
-    port = j.at("port").get<uint16_t>();
-  } catch (const std::exception& e) {
-    if (m_verbosity > 0) {
-      std::cerr << "  Storage_Module_Server::AnalysisAPIMessagesThreadFunction(): Error getting port from config file: " << e.what() << std::endl;
-    }
-    return;
-  }
-  if (port == 0) {
-    if (m_verbosity > 0) {
-      std::cerr << "  Storage_Module_Server::AnalysisAPIMessagesThreadFunction(): Invalid port number 0 in config file" << std::endl;
-    }
-    return;
-  }
-
-  // Construct a JSONStringSender to send messages to clients connecting to this port.
-  std::shared_ptr<JSONStringSender> jsonSender;
-  std::string url = "tcp://" + m_nicName + ":" + std::to_string(port);
-  Status status = JSONStringSender::Create(url, jsonSender);
-  if (status != OKAY) {
-    if (m_verbosity > 0) {
-      std::cerr << "  Storage_Module_Server::AnalysisAPIMessagesThreadFunction(): Error creating JSONStringSender: " << ErrorMessage(status) << std::endl;
-    }
-    return;
-  }
-
-  // Get a vector of all files in the directory that end with .json (any case) but are not config.json.
+  // Get a vector of all files in the directory that end with .json (any case).
   std::vector<std::filesystem::path> messageFiles;
   for (const auto& entry : std::filesystem::directory_iterator(directory)) {
     if (entry.is_regular_file()) {
       std::string filename = entry.path().filename().string();
       std::string extension = entry.path().extension().string();
       std::transform(extension.begin(), extension.end(), extension.begin(), ::tolower);
-      if (extension == ".json" && filename != "config.json") {
+      if (extension == ".json") {
         messageFiles.push_back(entry.path());
       }
     }
@@ -1687,7 +1684,7 @@ void Storage_Module_Server::AnalysisAPIMessagesThreadFunction(std::string direct
         std::string adjustedString = adjustTimeInJSONString(str, adjustedTime);
 
         // Send the adjusted string.
-        jsonSender->Send(adjustedString);
+        m_analysisAPISender->Send(adjustedString);
 
         // Get the next string from the receiver and record its time.
         status = recv->Receive(0.0, str);
