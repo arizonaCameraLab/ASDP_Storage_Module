@@ -8,28 +8,32 @@
 #include <cstdlib>
 #include <iostream>
 #include <chrono>
+#include <string>
+#include <vector>
 #include <ASDP_Core_API.h>
 #include <Storage_Module.h>
 
 using namespace asdp;
 
-static std::string VERSION = "3.10.0";
+static std::string VERSION = "3.11.0";
 
 void Usage(const char* programName, int code)
 {
   std::cerr << "Usage: " << programName << " [--version] [--verbosity V]"
-            << " NICNameIn NICNameOut StorageRoot" << std::endl;
+            << " NICNameIn NICNameOut StorageRoot [StorageRoot+]" << std::endl;
   std::cerr << "  --version: Print out the version number and exit" << std::endl;
   std::cerr << "  --verbosity V: Set the verbosity level to V (default 0)" << std::endl;
   std::cerr << "  NICNameIn: The IP address or DNS name of the NIC to listen on" << std::endl;
   std::cerr << "  NICNameOut: The IP address or DNS name of the NIC to broadcast on" << std::endl;
   std::cerr << "  StorageRoot: Root directory of the storage, which has a directory for each serial number" << std::endl;
+  std::cerr << "  StorageRoot+: Additional storage root directories (optional), camera streams written round-robin" << std::endl;
   std::exit(code);
 }
 
 int main(int argc, char** argv)
 {
-  std::string NICNameIn, NICNameOut, StorageRoot;
+  std::string NICNameIn, NICNameOut;
+  std::vector<std::string> StorageRoots;
   size_t realParams = 0;
   int verbosity = 0;
 
@@ -60,13 +64,12 @@ int main(int argc, char** argv)
         NICNameOut = argv[i];
         break;
       case 2:
-        StorageRoot = argv[i];
-        break;
       default:
-        Usage(argv[0], 2);
+        StorageRoots.push_back(argv[i]);
+        break;
     }
   }
-  if (realParams != 3) {
+  if (realParams< 3) {
     Usage(argv[0], 2);
   }
   if (NICNameIn == NICNameOut) {
@@ -79,7 +82,7 @@ int main(int argc, char** argv)
     if (verbosity > 0) {
       std::cout << "Opening storage module version " << VERSION << " listening on " << NICNameIn << " and broadcasting on " << NICNameOut << std::endl;
     }
-    Storage_Module sModule(NICNameIn, NICNameOut, StorageRoot, verbosity);
+    Storage_Module sModule(NICNameIn, NICNameOut, StorageRoots, verbosity);
     if (sModule.GetConstructorStatus() != OKAY) {
       std::cerr << "Failed to open module: " << ErrorMessage(sModule.GetConstructorStatus()) << std::endl;
       return 3;

@@ -58,6 +58,13 @@ protected:
   /// Server to use to send Analysis API messages, if any.
   std::shared_ptr<JSONStringSender> m_analysisAPISender;
 
+  /// @brief Compute the name of a stream file for a given camera ID (from 0 through the number of cameras).
+  /// @details The files are stored round-robin across the storage root directories.
+  /// @param streamID The ID of the stream to create the file name for.
+  /// @param cameraID The ID of the camera to create the file name for.
+  /// @return The file name associated with this stream.
+  std::string StreamFileName(uint32_t streamID, uint32_t cameraID) const;
+
   //=============================================================================
   // Analysis API-related state and methods.
 
@@ -270,11 +277,11 @@ public:
   /// object is doing okay.
   /// @param NicNameIn The name of the network interface to listen on for incoming connections.
   /// @param NicNameOut The name of the network interface to send outgoing connections on.
-  /// @param StorageRoot The root directory for storage.
+  /// @param StorageRoots The root directories for storage.
   /// @param verbosity The verbosity level of the server, 0 for no verbosity, higher for more verbosity.
   /// A negative verbosity will cause the server not to report error messages to the console.
   Storage_Module(const std::string &NicNameIn, const std::string &NicNameOut,
-    const std::string StorageRoot, int verbosity = 0);
+    const std::vector<std::string> &StorageRoots, int verbosity = 0);
 
   /// @brief Destructor
   ///
@@ -300,6 +307,14 @@ protected:
 
   /// The serial number of the device we are connected to.
   uint32_t m_serial;
+
+  /// @brief Compute the name of a stream file for a given camera ID (from 0 through the number of cameras).
+  /// @details The files are stored round-robin across the storage root directories.
+  /// @param streamID The ID of the stream to create the file name for.
+  /// @param cameraID The ID of the camera to create the file name for.
+  /// @return The file name associated with this stream.
+  std::string StreamFileName(uint32_t streamID, uint32_t cameraID) const;
+
 
   //=============================================================================
   /// Persistent state that is stored to disk and loaded from disk.
@@ -392,8 +407,8 @@ protected:
   //=============================================================================
   // Storage management.
 
-  /// The root directory for storage.
-  std::string m_storageRoot;
+  /// The root directories for storage.
+  std::vector<std::string> m_storageRoots;
 
   /// The number of cameras on the server we last connected to.
   size_t m_numCameras;

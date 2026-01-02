@@ -83,9 +83,11 @@ Storage_Module_Server::Storage_Module_Server(Storage_Module* parent, uint32_t se
     }
   }
 
-  // See if there is a config.json file in the storage root directory for this server.
+  // See if there is a config.json file in the first storage root directory for this server.
   // If so, see if it has an "analysisPort" entry. If so, open a JSONStringSender on that port.
-  std::string configFileName = m_parent->m_storageRoot + "/" + std::to_string(m_serial) + "/config.json";
+  std::string configFileName = m_parent->m_storageRoots.size() >= 1 ?
+    m_parent->m_storageRoots[0] + "/" + std::to_string(m_serial) + "/config.json" :
+    "./config.json";
   if (std::filesystem::exists(configFileName)) {
     try {
       std::ifstream configFile(configFileName);
@@ -148,6 +150,16 @@ Status Storage_Module_Server::ConfigureStateFromStoredState()
   return OKAY;
 }
 
+std::string Storage_Module_Server::StreamFileName(uint32_t streamID, uint32_t cameraID) const
+{
+  size_t numRoots = m_parent->m_storageRoots.size();
+  std::string root = ".";
+  if (numRoots > 0) {
+    root = m_parent->m_storageRoots[streamID % numRoots];
+  }
+  return root + "/" + std::to_string(m_serial) + "/" + std::to_string(streamID) + "/stream" + std::to_string(cameraID) + ".dat";
+}
+
 std::string Storage_Module_Server::ReadInitialTimeAndState(uint32_t streamID, std::shared_ptr<MessageState>& stateMessage)
 {
   // Clear the state message so we can check below for when we have read one.
@@ -156,7 +168,7 @@ std::string Storage_Module_Server::ReadInitialTimeAndState(uint32_t streamID, st
   // Open the main stream file for the stream ID and read the first message from it, storing its time that we
   // will use to offset message times.  Then continue to read messages until we get a status message and use it
   // to set the initial state of the server.
-  std::string fileName = m_parent->m_storageRoot + "/" + std::to_string(m_serial) + "/" + std::to_string(streamID) + "/stream0.dat";
+  std::string fileName = StreamFileName(streamID, 0);
   std::shared_ptr<ReceiverFile> replayFile = std::make_shared<ReceiverFile>(fileName);
   if (replayFile->GetConstructorStatus() != OKAY) {
     return "Cannot open " + fileName;
@@ -335,9 +347,23 @@ void Storage_Module_Server::doEveryLoop()
 
   // Once per second, check and fill in the disk-space information in our state.
   if (now - m_lastCheckDiskSpace > std::chrono::seconds(1)) {
-    std::filesystem::space_info info = std::filesystem::space(m_parent->m_storageRoot);
-    m_remainingDiskSpace = info.available;
-    m_totalDiskSpace = info.capacity;
+    std::filesystem::space_info minSpaceInfo;
+    for (const auto& root : m_parent->m_storageRoots) {
+      std::filesystem::space_info info = std::filesystem::space(root);
+      if (root == m_parent->m_storageRoots[0]) {
+        minSpaceInfo = info;
+      }
+      else {
+        if (info.available < minSpaceInfo.available) {
+          minSpaceInfo = info;
+        }
+      }
+    }
+
+    // When we have multiple storage roots, we assume that the data is spread evenly across them and
+    // that the relevant one to report on is the smallest.
+    m_remainingDiskSpace = minSpaceInfo.available * m_parent->m_storageRoots.size();
+    m_totalDiskSpace = minSpaceInfo.capacity * m_parent->m_storageRoots.size();
     m_lastCheckDiskSpace = now;
   }
 }
@@ -501,10 +527,13 @@ void Storage_Module_Server::doSetStartUpRecordingState(const CommandPacketSetSta
 
 std::vector<uint32_t> Storage_Module_Server::getStoredStreamIDs() const
 {
-  // Find a list of directory names in the storage root directory for our serial number.
+  // Find a list of directory names in the first storage root directory for our serial number.
   // Select the ones that can be parsed as unsigned integers.
   std::vector<uint32_t> storedStreamIDs;
-  std::filesystem::path dirPath = m_parent->m_storageRoot;
+  std::filesystem::path dirPath = ".";
+  if (!m_parent->m_storageRoots.empty()) {
+    dirPath = m_parent->m_storageRoots[0];
+  }
   dirPath /= std::to_string(m_serial);
   for (const auto& entry : std::filesystem::directory_iterator(dirPath)) {
     uint32_t streamID = 0;
@@ -569,38 +598,39 @@ void Storage_Module_Server::doEraseAllStoredStreams(const CommandPacketEraseAllS
 {
   std::lock_guard<std::mutex> lock(m_parent->m_storageMutex);
 
-  // Find a list of directory names in the storage root directory for our serial number.
+  // Find a list of directory names in the storage root directories for our serial number.
   // Select the ones that can be parsed as unsigned integers.
   std::vector<uint32_t> storedStreamIDs;
-  std::filesystem::path dirPath = m_parent->m_storageRoot;
-  dirPath /= std::to_string(m_serial);
-  for (const auto& entry : std::filesystem::directory_iterator(dirPath)) {
-    uint32_t streamID = 0;
-    try {
-      streamID = std::stoul(entry.path().filename().string());
-      storedStreamIDs.push_back(streamID);
-    } catch (const std::filesystem::filesystem_error& e) {
-      // Ignore any errors that occur while deleting the directories.
+  for (std::filesystem::path dirPath : m_parent->m_storageRoots) {
+    dirPath /= std::to_string(m_serial);
+    for (const auto& entry : std::filesystem::directory_iterator(dirPath)) {
+      uint32_t streamID = 0;
+      try {
+        streamID = std::stoul(entry.path().filename().string());
+        storedStreamIDs.push_back(streamID);
+      } catch (const std::filesystem::filesystem_error& e) {
+        // Ignore any errors that occur while deleting the directories.
+      }
     }
-  }
 
-  // Avoid deleting a stream that is currently being written to.
-  // Remove the currently-storing stream ID from the list if there is one.
-  if (m_parent->m_writingToID > 0) {
-    auto it = std::find(storedStreamIDs.begin(), storedStreamIDs.end(), m_parent->m_writingToID);
-    if (it != storedStreamIDs.end()) {
-      storedStreamIDs.erase(it);
+    // Avoid deleting a stream that is currently being written to.
+    // Remove the currently-storing stream ID from the list if there is one.
+    if (m_parent->m_writingToID > 0) {
+      auto it = std::find(storedStreamIDs.begin(), storedStreamIDs.end(), m_parent->m_writingToID);
+      if (it != storedStreamIDs.end()) {
+        storedStreamIDs.erase(it);
+      }
     }
-  }
 
-  // Erase all the stored streams remaining in the list by recursively removing their directory tree.
-  for (auto streamID : storedStreamIDs) {
-    std::filesystem::path streamPath = dirPath;
-    streamPath /= std::to_string(streamID);
-    try {
-      std::filesystem::remove_all(streamPath);
-    } catch (const std::filesystem::filesystem_error& e) {
-      // Ignore any errors that occur while deleting the directories.
+    // Erase all the stored streams remaining in the list by recursively removing their directory tree.
+    for (auto streamID : storedStreamIDs) {
+      std::filesystem::path streamPath = dirPath;
+      streamPath /= std::to_string(streamID);
+      try {
+        std::filesystem::remove_all(streamPath);
+      } catch (const std::filesystem::filesystem_error& e) {
+        // Ignore any errors that occur while deleting the directories.
+      }
     }
   }
 }
@@ -622,14 +652,15 @@ void Storage_Module_Server::doEraseStoredStream(const CommandPacketEraseStoredSt
     return;
   }
 
-  // Erase the stored stream by removing its directory tree.
-  std::filesystem::path streamPath = m_parent->m_storageRoot;
-  streamPath /= std::to_string(m_serial);
-  streamPath /= std::to_string(streamID);
-  try {
-    std::filesystem::remove_all(streamPath);
-  } catch (const std::filesystem::filesystem_error& e) {
-    // Ignore any errors that occur while deleting the directories.
+  // Erase the stored stream by removing its directory tree from all storage roots.
+  for (std::filesystem::path streamPath : m_parent->m_storageRoots) {
+    streamPath /= std::to_string(m_serial);
+    streamPath /= std::to_string(streamID);
+    try {
+      std::filesystem::remove_all(streamPath);
+    } catch (const std::filesystem::filesystem_error& e) {
+      // Ignore any errors that occur while deleting the directories.
+    }
   }
 }
 
@@ -705,7 +736,7 @@ void Storage_Module_Server::doStartReplay(const CommandPacketStartReplay& comman
 
   // Restart the main stream file so that all packets will be read from it and passed on.
   m_replayFiles[0].reset();
-  std::string fileName = m_parent->m_storageRoot + "/" + std::to_string(m_serial) + "/" + std::to_string(streamID) + "/stream0.dat";
+  std::string fileName = StreamFileName(streamID, 0);
   m_replayFiles[0] = std::make_shared<ReceiverFile>(fileName);
 
   // Open the camera stream files for each stream ID, add them round-robin along with camera IDs to a set of
@@ -718,7 +749,7 @@ void Storage_Module_Server::doStartReplay(const CommandPacketStartReplay& comman
   for (uint32_t i = 1; i <= cameras.size(); i++) {
     ReplayCameraDescription desc;
     desc.cameraID = i;
-    std::string fileName = m_parent->m_storageRoot + "/" + std::to_string(m_serial) + "/" + std::to_string(streamID) + "/stream" + std::to_string(i) + ".dat";
+    std::string fileName = StreamFileName(streamID, i);
     desc.receiver = std::make_shared<ReceiverFile>(fileName);
     cameraBatches[(i-1) % cameraBatches.size()].push_back(desc);
   }
@@ -727,7 +758,11 @@ void Storage_Module_Server::doStartReplay(const CommandPacketStartReplay& comman
   }
 
   // Start the analysis API thread if we have an analysis directory. See if it exists and is a directory.
-  std::string anaDir = m_parent->m_storageRoot + "/" + std::to_string(m_serial) + "/" + std::to_string(streamID) + "/analysis";
+  std::string rootDir = ".";
+  if (!m_parent->m_storageRoots.empty()) {
+    rootDir = m_parent->m_storageRoots[0];
+  }
+  std::string anaDir = rootDir + "/" + std::to_string(m_serial) + "/" + std::to_string(streamID) + "/analysis";
   if (std::filesystem::exists(anaDir) && std::filesystem::is_directory(anaDir)) {
     m_stopAnalysisAPIThread = false;
     m_analysisAPIThread = std::thread(&Storage_Module_Server::AnalysisAPIMessagesThreadFunction, this, anaDir);
@@ -1717,20 +1752,29 @@ void Storage_Module_Server::AnalysisAPIMessagesThreadFunction(std::string direct
 }
 
 Storage_Module::Storage_Module(const std::string& NicNameIn, const std::string& NicNameOut,
-                               const std::string StorageRoot, int verbosity)
+                               const std::vector<std::string> &StorageRoots, int verbosity)
   : CoreClient(NicNameIn)
   , m_status(CoreClient::GetConstructorStatus())
   , m_verbosity(verbosity)
   , m_nicNameIn(NicNameIn)
   , m_nicNameOut(NicNameOut)
-  , m_storageRoot(StorageRoot)
+  , m_storageRoots(StorageRoots)
   , m_numCameras(0)
   , m_writingToID(0)
-  , m_persistentState(StorageRoot + "/config.json")
+  , m_persistentState(StorageRoots.size() >= 1 ? StorageRoots[0] + "/config.json" : "./config.json")
   , m_stop(false)
   , m_nextPort(10101)
 {
   if (m_status != OKAY) {
+    return;
+  }
+
+  // Verify that there is at least one storage root directory.
+  if (m_storageRoots.size() == 0) {
+    if (m_verbosity >= 0) {
+      std::cerr << "Storage_Module::Storage_Module() no storage root directories specified" << std::endl;
+    }
+    m_status = BAD_PARAMETER;
     return;
   }
 
@@ -1750,11 +1794,15 @@ Storage_Module::Storage_Module(const std::string& NicNameIn, const std::string& 
     return;
   }
 
-  // Verify that the storage root directory exists.
-  std::filesystem::path configPath = m_storageRoot;
-  if (!std::filesystem::exists(configPath)) {
-    m_status = FILE_FAILURE;
-    return;
+  // Verify that the storage root directories exist.
+  for (const std::filesystem::path path : m_storageRoots) {
+    if (!std::filesystem::exists(path)) {
+      if (m_verbosity >= 0) {
+        std::cerr << "Storage_Module::Storage_Module() storage root directory does not exist: " << path << std::endl;
+      }
+      m_status = FILE_FAILURE;
+      return;
+    }
   }
 
   // Verify that the buffer sizes in the configuration file are valid.
@@ -1780,25 +1828,28 @@ Storage_Module::Storage_Module(const std::string& NicNameIn, const std::string& 
     return;
   }
 
-  // Start a server thread for each serial number directory found in the storage root.
+  // Start a server thread for each serial number directory found in the first storage root.
   // Use the factory function to determine the listening port for each server.
-  for (const auto& entry : std::filesystem::directory_iterator(m_storageRoot)) {
-    if (entry.is_directory()) {
-      // If we can't convert the name into an unsigned integer, skip it.
-      uint32_t serialNumber = 0;
-      try {
-        serialNumber = std::stoul(entry.path().filename().string());
-        if (verbosity > 1) {
-          std::cout << " Storage_Module::Starting server for serial# " << serialNumber << std::endl;
+  if (!m_storageRoots.empty()) {
+    for (const auto& entry : std::filesystem::directory_iterator(m_storageRoots[0])) {
+      if (entry.is_directory()) {
+        // If we can't convert the name into an unsigned integer, skip it.
+        uint32_t serialNumber = 0;
+        try {
+          serialNumber = std::stoul(entry.path().filename().string());
+          if (verbosity > 1) {
+            std::cout << " Storage_Module::Starting server for serial# " << serialNumber << std::endl;
+          }
+          m_servers.emplace_back(
+            std::make_shared<ServerInfo>(
+              serialNumber,
+              std::make_shared<Storage_Module_Server>(this, serialNumber, NicNameOut,
+                10102, m_nextPort.fetch_sub(1), 9000 - 28, verbosity)));
+          m_server_threads.emplace_back(std::thread(&Storage_Module::ServerThread, this, m_servers.back()));
         }
-        m_servers.emplace_back(
-          std::make_shared<ServerInfo>(
-            serialNumber,
-            std::make_shared<Storage_Module_Server>(this, serialNumber, NicNameOut,
-              10102, m_nextPort.fetch_sub(1), 9000 - 28, verbosity)));
-        m_server_threads.emplace_back(std::thread(&Storage_Module::ServerThread, this, m_servers.back()));
-      } catch(...) {
-        // Nothing to do here.
+        catch (...) {
+          // Nothing to do here.
+        }
       }
     }
   }
@@ -2087,6 +2138,16 @@ void Storage_Module::ClientThread()
   }
 }
 
+std::string Storage_Module::StreamFileName(uint32_t streamID, uint32_t cameraID) const
+{
+  size_t numRoots = m_storageRoots.size();
+  std::string root = ".";
+  if (numRoots > 0) {
+    root = m_storageRoots[streamID % numRoots];
+  }
+  return root + "/" + std::to_string(m_serial) + "/" + std::to_string(streamID) + "/stream" + std::to_string(cameraID) + ".dat";
+}
+
 Status Storage_Module::StartStoring()
 {
   std::lock_guard<std::mutex> lock(m_storageMutex);
@@ -2103,11 +2164,14 @@ Status Storage_Module::StartStoring()
 
   // Create the appropriate directory to store our files into by finding the lowest unused ID (starting with 1)
   // that is available in the root directory under our serial number.
+  if (m_storageRoots.empty()) {
+    return FILE_FAILURE;
+  }
   uint32_t storageID = 1;
-  while (std::filesystem::exists(m_storageRoot + "/" + std::to_string(m_serial) + "/" + std::to_string(storageID))) {
+  while (std::filesystem::exists(m_storageRoots[0] + "/" + std::to_string(m_serial) + "/" + std::to_string(storageID))) {
     storageID++;
   }
-  std::string dirName = m_storageRoot + "/" + std::to_string(m_serial) + "/" + std::to_string(storageID);
+  std::string dirName = m_storageRoots[0] + "/" + std::to_string(m_serial) + "/" + std::to_string(storageID);
   if (!std::filesystem::create_directory(dirName)) {
     if (m_verbosity >= 0) {
       std::cerr << "Storage_Module::Failed to create directory: "
@@ -2118,7 +2182,7 @@ Status Storage_Module::StartStoring()
   }
 
   // Make a file storage sender for the non-camera stream.  This is not writing in DirectMode.
-  std::string fileName = m_storageRoot + "/" + std::to_string(m_serial) + "/" + std::to_string(storageID) + "/stream0.dat";
+  std::string fileName = StreamFileName(storageID, 0);
   m_storageSenders[0] = std::make_shared<SenderFile>(fileName, false);
   if (m_storageSenders[0]->GetConstructorStatus() != OKAY) {
     if (m_verbosity >= 0) {
@@ -2133,7 +2197,7 @@ Status Storage_Module::StartStoring()
 
   // Make a file storage sender for each camera stream.  These are writing in DirectMode.
   for (uint32_t i = 1; i <= m_numCameras; i++) {
-    fileName = m_storageRoot + "/" + std::to_string(m_serial) + "/" + std::to_string(storageID) + "/stream" + std::to_string(i) + ".dat";
+    fileName = StreamFileName(storageID, i);
     m_storageSenders[i] = std::make_shared<SenderFile>(fileName, true);
     if (m_storageSenders[i]->GetConstructorStatus() != OKAY) {
       if (m_verbosity >= 0) {
@@ -2180,14 +2244,15 @@ Status Storage_Module::ConstructNewServer(std::shared_ptr<Storage_Module_Server>
     std::cout << " Storage_Module::ConstructNewServer() for serial# " << m_serial << std::endl;
   }
 
-  // Make a directory for the serial number in the storage root.
-  std::filesystem::path dirPath = m_storageRoot;
-  dirPath /= std::to_string(m_serial);
-  if (std::filesystem::exists(dirPath)) {
-    // This should not happen.
-    return UNEXPECTED_INTERNAL_STATE;
+  // Make a directory for the serial number in all of the storage roots.
+  for (std::filesystem::path dirPath : m_storageRoots) {
+    dirPath /= std::to_string(m_serial);
+    if (std::filesystem::exists(dirPath)) {
+      // This should not happen.
+      return UNEXPECTED_INTERNAL_STATE;
+    }
+    std::filesystem::create_directory(dirPath);
   }
-  std::filesystem::create_directory(dirPath);
 
   // Create a new server and start a server thread for it.
   m_servers.emplace_back(
