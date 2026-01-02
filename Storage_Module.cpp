@@ -155,7 +155,7 @@ std::string Storage_Module_Server::StreamFileName(uint32_t streamID, uint32_t ca
   size_t numRoots = m_parent->m_storageRoots.size();
   std::string root = ".";
   if (numRoots > 0) {
-    root = m_parent->m_storageRoots[streamID % numRoots];
+    root = m_parent->m_storageRoots[cameraID % numRoots];
   }
   return root + "/" + std::to_string(m_serial) + "/" + std::to_string(streamID) + "/stream" + std::to_string(cameraID) + ".dat";
 }
@@ -2145,7 +2145,7 @@ std::string Storage_Module::StreamFileName(uint32_t streamID, uint32_t cameraID)
   size_t numRoots = m_storageRoots.size();
   std::string root = ".";
   if (numRoots > 0) {
-    root = m_storageRoots[streamID % numRoots];
+    root = m_storageRoots[cameraID % numRoots];
   }
   return root + "/" + std::to_string(m_serial) + "/" + std::to_string(streamID) + "/stream" + std::to_string(cameraID) + ".dat";
 }
