@@ -37,7 +37,10 @@ The dotted decimal name can be found using the `ifconfig` command on Linux and `
 NICNameIn and NICNameOut cannot be the same, to avoid connecting to itself.
 StorageRoot specifies the root directory where data should be stored.  This will
 create a configuration file named **config.json** in the StorageRoot directory if
-there is not one already present.
+there is not one already present. **Note:** There can be more than one StorageRoot
+specified. If more than one is specified, the camera stream files for each stream
+will be stored round-robin fashion in the specified StorageRoot directories. This is
+useful when multiple disks are used to increase the overall write capacity or speed.
 
 A directory named with the serial number of each camera will be created when the
 camera is first connected.  Within that directory, a subdirectory named with the
