@@ -758,14 +758,16 @@ void Storage_Module_Server::doStartReplay(const CommandPacketStartReplay& comman
   }
 
   // Start the analysis API thread if we have an analysis directory. See if it exists and is a directory.
-  std::string rootDir = ".";
-  if (!m_parent->m_storageRoots.empty()) {
-    rootDir = m_parent->m_storageRoots[0];
-  }
-  std::string anaDir = rootDir + "/" + std::to_string(m_serial) + "/" + std::to_string(streamID) + "/analysis";
-  if (std::filesystem::exists(anaDir) && std::filesystem::is_directory(anaDir)) {
-    m_stopAnalysisAPIThread = false;
-    m_analysisAPIThread = std::thread(&Storage_Module_Server::AnalysisAPIMessagesThreadFunction, this, anaDir);
+  {
+    std::string rootDir = ".";
+    if (!m_parent->m_storageRoots.empty()) {
+      rootDir = m_parent->m_storageRoots[0];
+    }
+    std::string anaDir = rootDir + "/" + std::to_string(m_serial) + "/" + std::to_string(streamID) + "/analysis";
+    if (std::filesystem::exists(anaDir) && std::filesystem::is_directory(anaDir)) {
+      m_stopAnalysisAPIThread = false;
+      m_analysisAPIThread = std::thread(&Storage_Module_Server::AnalysisAPIMessagesThreadFunction, this, anaDir);
+    }
   }
 
   // Switching away from live mode and not paused.
@@ -2163,7 +2165,8 @@ Status Storage_Module::StartStoring()
   }
 
   // Create the appropriate directory to store our files into by finding the lowest unused ID (starting with 1)
-  // that is available in the root directory under our serial number.
+  // that is available in the first root directory under our serial number.
+  // Create the directory for the serial number for all root directories if it does not already exist.
   if (m_storageRoots.empty()) {
     return FILE_FAILURE;
   }
@@ -2171,14 +2174,16 @@ Status Storage_Module::StartStoring()
   while (std::filesystem::exists(m_storageRoots[0] + "/" + std::to_string(m_serial) + "/" + std::to_string(storageID))) {
     storageID++;
   }
-  std::string dirName = m_storageRoots[0] + "/" + std::to_string(m_serial) + "/" + std::to_string(storageID);
-  if (!std::filesystem::create_directory(dirName)) {
-    if (m_verbosity >= 0) {
-      std::cerr << "Storage_Module::Failed to create directory: "
-        << ErrorMessage(m_storageSenders[0]->GetConstructorStatus()) << std::endl;
-      std::cerr << "  Directory name: " << dirName << std::endl;
+  for (auto dirPath : m_storageRoots) {
+    std::string dirName = dirPath + "/" + std::to_string(m_serial) + "/" + std::to_string(storageID);
+    if (!std::filesystem::create_directory(dirName)) {
+      if (m_verbosity >= 0) {
+        std::cerr << "Storage_Module::Failed to create directory: "
+          << ErrorMessage(m_storageSenders[0]->GetConstructorStatus()) << std::endl;
+        std::cerr << "  Directory name: " << dirName << std::endl;
+      }
+      return FILE_FAILURE;
     }
-    return FILE_FAILURE;
   }
 
   // Make a file storage sender for the non-camera stream.  This is not writing in DirectMode.
