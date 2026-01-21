@@ -27,15 +27,24 @@ void readFromFile(const std::string& fileName, std::atomic<bool>& stopFlag, doub
   while (!stopFlag) {
     size_t size = data.size();
     receiver->ReceiveBuffer(data.data(), size);
-    data.resize(size);
+    if (size != data.size()) {
+      // We've gotten all the data, so we bail out and time what we got.
+      break;
+    }
     ++count;
   }
 
   receiver.reset();
 
   auto endTime = std::chrono::steady_clock::now();
-  auto duration = std::chrono::duration_cast<std::chrono::seconds>(endTime - startTime);
-  fps = static_cast<double>(count) / duration.count();
+  // get elapsed time as a double in seconds (keeps fractional part)
+  std::chrono::duration<double> elapsed = endTime - startTime;
+  double seconds = elapsed.count();
+  if (seconds > 0.0) {
+    fps = static_cast<double>(count) / seconds;
+  } else {
+    fps = 0.0;
+  }
 }
 
 int main(int argc, char* argv[]) {
@@ -64,7 +73,7 @@ int main(int argc, char* argv[]) {
 
   std::atomic<bool> stopFlag(false);
 
-  // Start threads to write data to the files
+  // Start threads to read data from the files
   std::cout << "Reading from " << numberOfCameras << " cameras for " << timeInSeconds << " seconds" << std::endl;
   std::vector<std::thread> threads;
   for (int i = 0; i < numberOfCameras; ++i) {
@@ -79,7 +88,7 @@ int main(int argc, char* argv[]) {
   // Wait for the threads to start
   std::this_thread::sleep_for(std::chrono::seconds(1));
 
-  // Continue writing data to the files until the time has elapsed
+  // Continue reading data from the files until the time has elapsed
   auto startTime = std::chrono::steady_clock::now();
   while (std::chrono::duration_cast<std::chrono::seconds>(std::chrono::steady_clock::now() - startTime).count() < timeInSeconds) {
     std::this_thread::sleep_for(std::chrono::milliseconds(1));
