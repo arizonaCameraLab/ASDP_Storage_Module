@@ -1140,10 +1140,10 @@ void Storage_Module_Server::ReplayInputThread(unsigned cameraID, std::shared_ptr
 {
   // Make a pool of packets to use for receiving messages.  When the packet's destructor is called, it
   // will return the memory to the pool.  This speeds up reading because we don't need to allocate a new
-  // buffer in the ReceiveStreamPacket() call.  Start with some packets in the pool.  More will be allocated
-  // if needed.
+  // buffer in the ReceiveStreamPacket() call.  Start with some packets in the pool (one more than the number
+  // we will await empty in the queue).  More will be allocated if needed.
   uint32_t numPrefetch = 345;
-  asdp::BufferPool bufferPool(m_parent->m_persistentState.TotalBufferSize(), numPrefetch);
+  asdp::BufferPool bufferPool(m_parent->m_persistentState.TotalBufferSize(), numPrefetch+1);
 
   // Use a sorted queue to handle any re-ordering that happened when the packets were stored.
   std::shared_ptr<StreamPacketSortedQueue> sortedQueue = std::make_shared<StreamPacketSortedQueue>(50);
@@ -1166,11 +1166,12 @@ void Storage_Module_Server::ReplayInputThread(unsigned cameraID, std::shared_ptr
         continue;
       }
 
-      if (inputQueue->size() > numPrefetch / 2) {
+      // Manage reporting when the queue has been filled and then drained.
+      size_t currentSize = inputQueue->size();
+      if (currentSize > numPrefetch / 2) {
         hasBeenFilled = true;
       }
-
-      if (hasBeenFilled && inputQueue->size() < 2) {
+      if (hasBeenFilled && currentSize < 2) {
         if (m_verbosity >= 2) {
           std::cout << "Input queue " << cameraID << " drained after reaching " << numPrefetch / 2 << "\n";
         }
