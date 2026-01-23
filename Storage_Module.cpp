@@ -1069,7 +1069,8 @@ void Storage_Module_Server::ReplayThread(std::vector<ReplayCameraDescription> ca
       std::shared_ptr<PacketTime> &packetTime = packetTimes[cameraID];
 
       // If we have no cached packet, get one from the input queue if it is available.
-      // NOTE: We must wait at least 1 microsecond to avoid blocking the enqueue calls.
+      // NOTE: We must wait at least 1 microsecond to avoid blocking the enqueue calls
+      // by continually calling dequeue with zero timeout.
       if (!packetTime) {
         if (!inputQueues[cameraID]->dequeue(packetTime, std::chrono::microseconds(1))) {
           continue;
@@ -1157,6 +1158,8 @@ void Storage_Module_Server::ReplayInputThread(unsigned cameraID, std::shared_ptr
   double meanTimePerIteration = 0.0;
   double maxTimePerIteration = 0.0;
   auto lastReportedTime = lastTime;
+  size_t maxSizeDiff = 0;
+  size_t lastSize = 0;
   while (!m_stopReplayThreads) {
     if (inputQueue->awaitEmpty(numPrefetch, std::chrono::milliseconds(100))) {
 
@@ -1177,6 +1180,10 @@ void Storage_Module_Server::ReplayInputThread(unsigned cameraID, std::shared_ptr
         }
         hasBeenFilled = false;
       }
+      if (currentSize < lastSize) {
+        maxSizeDiff = std::max(maxSizeDiff, lastSize - currentSize);
+      }
+      lastSize = currentSize;
 
       // Get the next packet from the receiver.
       std::shared_ptr<StreamPacket> packet;
@@ -1242,13 +1249,15 @@ void Storage_Module_Server::ReplayInputThread(unsigned cameraID, std::shared_ptr
       iterationCount++;
       lastTime = now;
       if (now - lastReportedTime > std::chrono::milliseconds(2000)) {
-        std::cout << "Mean input iteration time: " << meanTimePerIteration * 1e3 / iterationCount
-          << "ms (max " << maxTimePerIteration * 1e3 << ")" << std::endl;
+        std::cout << "Camera " << cameraID << " mean input iteration time: " << meanTimePerIteration * 1e3 / iterationCount
+          << "ms (max " << maxTimePerIteration * 1e3 << "), max size diff " << maxSizeDiff << std::endl;
         lastReportedTime = now;
         lastTime = std::chrono::steady_clock::now();
         meanTimePerIteration = 0.0;
         maxTimePerIteration = 0.0;
         iterationCount = 0;
+        maxSizeDiff = 0;
+        lastSize = 0;
       }
     }
 
