@@ -1048,7 +1048,7 @@ void Storage_Module_Server::ReplayThread(std::vector<ReplayCameraDescription> ca
     if (m_verbosity > 5) {
       auto now = std::chrono::steady_clock::now();
       if (now - lastLagReport > std::chrono::milliseconds(10000)) {
-        // Skip the first one when we just started.
+        // Skip the first one when we just started. The first will have an essentially infinite difference, we check for under 20000ms.
         if (now - lastLagReport < std::chrono::milliseconds(20000)) {
           double maxLag = std::numeric_limits<double>::min();
           for (const auto& camera : cameras) {
@@ -1084,6 +1084,7 @@ void Storage_Module_Server::ReplayThread(std::vector<ReplayCameraDescription> ca
           if (m_verbosity >= 0) {
             std::cerr << "Storage_Module_Server::ReplayThread(): Error sending stream packet: " + ret << std::endl;
           }
+
         }
         packetTime.reset();
 
