@@ -1045,7 +1045,7 @@ void Storage_Module_Server::ReplayThread(std::vector<ReplayCameraDescription> ca
   while (!m_stopReplayThreads) {
 
     bool doReport = false;
-    if (m_verbosity > 5) {
+    if (m_verbosity > 4) {
       auto now = std::chrono::steady_clock::now();
       if (now - lastLagReport > std::chrono::milliseconds(10000)) {
         // Skip the first one when we just started. The first will have an essentially infinite difference, we check for under 20000ms.
@@ -1143,7 +1143,7 @@ void Storage_Module_Server::ReplayInputThread(unsigned cameraID, std::shared_ptr
   // will return the memory to the pool.  This speeds up reading because we don't need to allocate a new
   // buffer in the ReceiveStreamPacket() call.  Start with some packets in the pool (one more than the number
   // we will await empty in the queue).  More will be allocated if needed.
-  uint32_t numPrefetch = 345;
+  uint32_t numPrefetch = 1000;
   asdp::BufferPool bufferPool(m_parent->m_persistentState.TotalBufferSize(), numPrefetch+1);
 
   // Use a sorted queue to handle any re-ordering that happened when the packets were stored.
@@ -1159,6 +1159,7 @@ void Storage_Module_Server::ReplayInputThread(unsigned cameraID, std::shared_ptr
   double maxTimePerIteration = 0.0;
   auto lastReportedTime = lastTime;
   size_t maxSizeDiff = 0;
+  size_t maxSize = 0;
   size_t lastSize = 0;
   while (!m_stopReplayThreads) {
     if (inputQueue->awaitEmpty(numPrefetch, std::chrono::milliseconds(100))) {
@@ -1175,7 +1176,7 @@ void Storage_Module_Server::ReplayInputThread(unsigned cameraID, std::shared_ptr
         hasBeenFilled = true;
       }
       if (hasBeenFilled && currentSize < 2) {
-        if (m_verbosity >= 2) {
+        if (m_verbosity >= 2/* && cameraID == 17*/) {
           std::cout << "Input queue " << cameraID << " drained after reaching " << numPrefetch / 2 << "\n";
         }
         hasBeenFilled = false;
@@ -1184,6 +1185,7 @@ void Storage_Module_Server::ReplayInputThread(unsigned cameraID, std::shared_ptr
         maxSizeDiff = std::max(maxSizeDiff, lastSize - currentSize);
       }
       lastSize = currentSize;
+      maxSize = std::max(maxSize, currentSize);
 
       // Get the next packet from the receiver.
       std::shared_ptr<StreamPacket> packet;
@@ -1241,7 +1243,7 @@ void Storage_Module_Server::ReplayInputThread(unsigned cameraID, std::shared_ptr
       }
     }
 
-    if (m_verbosity > 4) {
+    if (m_verbosity > 4 /*&& cameraID == 17*/) {
       auto now = std::chrono::steady_clock::now();
       double timePerIteration = std::chrono::duration<double>(now - lastTime).count();
       meanTimePerIteration += timePerIteration;
@@ -1250,13 +1252,14 @@ void Storage_Module_Server::ReplayInputThread(unsigned cameraID, std::shared_ptr
       lastTime = now;
       if (now - lastReportedTime > std::chrono::milliseconds(2000)) {
         std::cout << "Camera " << cameraID << " mean input iteration time: " << meanTimePerIteration * 1e3 / iterationCount
-          << "ms (max " << maxTimePerIteration * 1e3 << "), max size diff " << maxSizeDiff << std::endl;
+          << "ms (max " << maxTimePerIteration * 1e3 << "), max size " << maxSize << ", max size diff " << maxSizeDiff << std::endl;
         lastReportedTime = now;
         lastTime = std::chrono::steady_clock::now();
         meanTimePerIteration = 0.0;
         maxTimePerIteration = 0.0;
         iterationCount = 0;
         maxSizeDiff = 0;
+        maxSize = 0;
         lastSize = 0;
       }
     }
