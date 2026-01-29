@@ -1085,7 +1085,6 @@ void Storage_Module_Server::ReplayThread(std::vector<ReplayCameraDescription> ca
           if (m_verbosity >= 0) {
             std::cerr << "Storage_Module_Server::ReplayThread(): Error sending stream packet: " + ret << std::endl;
           }
-
         }
         packetTime.reset();
 
