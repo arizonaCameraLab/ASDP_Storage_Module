@@ -1645,12 +1645,12 @@ static std::string adjustTimeInJSONString(const std::string& jsonString, const T
   json j;
   try {
     j = json::parse(jsonString);
+    j["Time"] = { adjustedTime.seconds, adjustedTime.microseconds };
   } catch (const std::exception& e) {
-    std::cerr << "adjustTimeInJSONString(): Error parsing JSON string: " << e.what() << std::endl;
+    std::cerr << "adjustTimeInJSONString(): Error parsing or modifying JSON string: " << e.what() << std::endl;
     return jsonString;
   }
   // Set the time field.
-  j["time"] = { adjustedTime.seconds, adjustedTime.microseconds };
   // Return the modified JSON string.
   return j.dump();
 }
