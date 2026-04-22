@@ -1625,7 +1625,7 @@ static Time stringTimeToTime(const std::string& timeStr)
     j = json::parse(timeStr);
   } catch (const std::exception& e) {
     std::cerr << "stringTimeToTime(): Error parsing JSON string: " << e.what() << std::endl;
-    return { std::numeric_limits<uint32_t>::max(), std::numeric_limits<uint32_t>::max() };
+    return { std::numeric_limits<uint32_t>::max(), 999999 };
   }
   // Get the time field.
   std::array<uint32_t, 2> msgTimeArray;
@@ -1633,7 +1633,7 @@ static Time stringTimeToTime(const std::string& timeStr)
     msgTimeArray = j.at("Time").get< std::array<uint32_t, 2> >();
   } catch (const std::exception& e) {
     std::cerr << "stringTimeToTime(): Error getting time field from JSON object: " << e.what() << std::endl;
-    return { std::numeric_limits<uint32_t>::max(), std::numeric_limits<uint32_t>::max() };
+    return { std::numeric_limits<uint32_t>::max(), 999999 };
   }
   Time msgTime = { msgTimeArray[0], msgTimeArray[1] };
   return msgTime;
@@ -1741,7 +1741,7 @@ void Storage_Module_Server::AnalysisAPIMessagesThreadFunction(std::string direct
         if (status == TIMEOUT) {
           // No more strings available right now.
           str = "";
-          currentTimes[i] = { std::numeric_limits<uint32_t>::max(), std::numeric_limits<uint32_t>::max() };
+          currentTimes[i] = { std::numeric_limits<uint32_t>::max(), 999999 };
           break;
         }
         if (status != OKAY) {
@@ -1750,7 +1750,7 @@ void Storage_Module_Server::AnalysisAPIMessagesThreadFunction(std::string direct
               << i << ": " << ErrorMessage(status) << std::endl;
           }
           str = "";
-          currentTimes[i] = { std::numeric_limits<uint32_t>::max(), std::numeric_limits<uint32_t>::max() };
+          currentTimes[i] = { std::numeric_limits<uint32_t>::max(), 999999 };
           break;
         }
         currentTimes[i] = stringTimeToTime(str);
