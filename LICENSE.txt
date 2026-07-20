@@ -1,0 +1,11 @@
+Copyright (C) 2024-2026: Arizona Board of Regents on Behalf of the University of Arizona
+All rights reserved.
+
+This software is made available under the Apache License, Version 2.0.
+You may obtain a copy of the license at https://www.apache.org/licenses/LICENSE-2.0.
+The software is provided on an "AS IS" basis, without warranties or conditions of any kind,
+and we do not represent or warrant that it is free of third-party patents,
+intellectual-property claims, or other encumbrances.
+
+We list below third-party software that is used by this software package,
+along with their respective licenses. Please refer to the individual license files for more details.
