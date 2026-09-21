@@ -1800,6 +1800,7 @@ Storage_Module::Storage_Module(const std::string& NicNameIn, const std::string& 
     if (m_persistentState.MajorVersion() != major) {
       if (m_verbosity >= 0) {
         std::cerr << "Storage_Module::Storage_Module() version mismatch: " << m_persistentState.MajorVersion() << " != " << major << std::endl;
+        std::cerr << "  (This may be because the provided storage directory does not exist)" << std::endl;
       }
       m_status = INCOMPATIBLE_API_VERSION;
       return;
